@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "셀러보드 - 상품 정보 수집",
+  "version": "1.0.0",
+  "description": "쇼핑몰 상품 정보를 효율적으로 수집하고 관리하는 크롬 확장프로그램",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "alarms",
+    "scripting",
+    "notifications"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "lib/parser.js",
+        "content/content-script.js",
+        "content/drag-selector.js",
+        "content/widget.js"
+      ],
+      "css": [
+        "styles/widget.css",
+        "styles/overlay.css"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "assets/icons/icon16.png",
+      "48": "assets/icons/icon48.png",
+      "128": "assets/icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "assets/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

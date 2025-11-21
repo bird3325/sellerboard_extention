@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>셀러보드</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <div class="popup-container">
+    <!-- 헤더 -->
+    <div class="popup-header">
+      <div class="popup-logo">
+        <div class="logo-icon">S</div>
+        <span class="popup-title">셀러보드</span>
+      </div>
+      <span class="version">v1.0</span>
+    </div>
+
+    <!-- 빠른 액션 -->
+    <div class="quick-actions">
+      <button class="action-btn primary" id="collect-current-btn">
+        <span class="icon">📦</span>
+        <span class="label">현재 페이지 수집</span>
+      </button>
+
+      <button class="action-btn secondary" id="open-dashboard-btn">
+        <span class="icon">📊</span>
+        <span class="label">대시보드 열기</span>
+      </button>
+    </div>
+
+    <!-- 통계 -->
+    <div class="stats-section">
+      <h3 class="section-title">수집 통계</h3>
+      <div class="stats-grid">
+        <div class="stat-item">
+          <span class="stat-value" id="stat-today">0</span>
+          <span class="stat-label">오늘 수집</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value" id="stat-total">0</span>
+          <span class="stat-label">전체 상품</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 최근 수집 -->
+    <div class="recent-section">
+      <h3 class="section-title">최근 수집 상품</h3>
+      <div class="recent-list" id="recent-products">
+        <div class="empty-state">로딩 중...</div>
+      </div>
+    </div>
+
+    <!-- 푸터 -->
+    <div class="footer">
+      <a href="#" class="footer-link" id="settings-link">설정</a>
+      <a href="#" class="footer-link" id="help-link">도움말</a>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>
