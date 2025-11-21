@@ -24,10 +24,12 @@
       "js": [
         "lib/parser.js",
         "content/content-script.js",
-        "content/drag-selector.js"
+        "content/drag-selector.js",
+        "content/widget.js"
       ],
       "css": [
-        "styles/overlay.css"
+        "styles/overlay.css",
+        "styles/widget.css"
       ],
       "run_at": "document_end"
     }

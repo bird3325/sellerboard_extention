@@ -69,6 +69,20 @@ async function loadProductDetail(id) {
     } catch (error) {
         console.error('상품 로드 오류:', error);
         alert('데이터를 불러오는 중 오류가 발생했습니다.');
+    }
+}
+
+/**
+ * 상품 상세 정보 렌더링
+ */
+function renderProductDetail(product) {
+    const container = document.getElementById('detail-container');
+    container.innerHTML = `
+        <div class="product-header">
+            <h1 class="product-title">${product.name}</h1>
+        </div>
+
+        <div class="product-detail-grid">
             < !--이미지 갤러리-- >
             <div class="image-gallery">
                 <div class="main-image-container">
@@ -270,15 +284,28 @@ function formatPrice(price) {
         currency: 'KRW'
     }).format(price * EXCHANGE_RATE);
 
-    return `${ usd } <span style="color: #888; font-size: 0.9em;">(${krw})</span>`;
+    return `${usd} <span style="color: #888; font-size: 0.9em;">(${krw})</span>`;
 }
+
+function formatDate(dateString) {
     return new Date(dateString).toLocaleString('ko-KR');
+}
+
+function formatOptionPrice(val) {
+    if (val.price !== undefined) {
+        return formatPrice(val.price);
+    }
+    if (val.priceAdjustment) {
+        const sign = val.priceAdjustment > 0 ? '+' : '';
+        return `${sign}${formatPrice(Math.abs(val.priceAdjustment))}`;
+    }
+    return '-';
 }
 
 function formatStock(stock) {
     if (stock === 'out_of_stock') return '<span style="color: var(--danger)">품절</span>';
     if (stock === 'in_stock') return '<span style="color: var(--success)">재고 있음</span>';
-    if (typeof stock === 'number') return `${ stock } 개`;
+    if (typeof stock === 'number') return `${stock} 개`;
     return '-';
 }
 
