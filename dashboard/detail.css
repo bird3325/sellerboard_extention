@@ -1,0 +1,231 @@
+/* 상세 페이지 스타일 */
+
+.back-btn {
+    background: none;
+    border: none;
+    font-size: 14px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    margin-bottom: 8px;
+    padding: 0;
+    font-weight: 500;
+}
+
+.back-btn:hover {
+    color: var(--primary);
+    text-decoration: underline;
+}
+
+.detail-container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* 로딩 상태 */
+.loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 100px 0;
+    color: var(--text-secondary);
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 16px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* 상세 그리드 레이아웃 */
+.product-detail-grid {
+    display: grid;
+    grid-template-columns: 400px 1fr;
+    gap: 32px;
+    margin-bottom: 32px;
+}
+
+/* 이미지 갤러리 */
+.image-gallery {
+    background: white;
+    padding: 16px;
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+}
+
+.main-image-container {
+    width: 100%;
+    height: 400px;
+    margin-bottom: 16px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+}
+
+.main-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.thumbnail-list {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+}
+
+.thumbnail {
+    width: 60px;
+    height: 60px;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    object-fit: cover;
+}
+
+.thumbnail:hover {
+    border-color: var(--border);
+}
+
+.thumbnail.active {
+    border-color: var(--primary);
+}
+
+/* 상품 정보 */
+.product-info-card {
+    background: white;
+    padding: 24px;
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+}
+
+.info-header {
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px;
+}
+
+.info-platform {
+    display: inline-block;
+    padding: 4px 12px;
+    background: var(--bg);
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.info-price {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+    margin-bottom: 24px;
+}
+
+.info-item label {
+    display: block;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.info-item div {
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text);
+}
+
+/* 옵션 섹션 */
+.options-section {
+    margin-top: 24px;
+}
+
+.section-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: var(--text);
+}
+
+.options-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.options-table th {
+    background: var(--bg);
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+}
+
+.options-table td {
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.option-image {
+    width: 40px;
+    height: 40px;
+    border-radius: 4px;
+    object-fit: cover;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+/* 상세 설명 섹션 */
+.description-section {
+    background: white;
+    padding: 32px;
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    margin-top: 32px;
+}
+
+.description-content {
+    line-height: 1.6;
+    color: var(--text);
+}
+
+.description-content img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 16px auto;
+}
+
+/* 반응형 */
+@media (max-width: 768px) {
+    .product-detail-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .main-image-container {
+        height: 300px;
+    }
+}

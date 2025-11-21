@@ -4,6 +4,8 @@
 
 console.log('셀러보드 Content Script 로드 시작');
 
+let productParser;
+
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initContentScript);
 } else {
@@ -12,6 +14,7 @@ if (document.readyState === 'loading') {
 
 function initContentScript() {
     console.log('셀러보드 Content Script 초기화 완료');
+    productParser = new ProductParser();
     setupMessageListeners();
     setupKeyboardShortcuts();
 }
@@ -54,22 +57,25 @@ function setupMessageListeners() {
  * 상품 수집 처리
  */
 function handleCollectProduct(sendResponse) {
-    try {
-        console.log('상품 데이터 추출 시작');
-        const productData = productParser.extractProductData();
-        console.log('추출된 데이터:', productData);
+    (async () => {
+        try {
+            console.log('상품 데이터 추출 시작');
+            const productData = await productParser.extractProductData();
+            console.log('추출된 데이터:', productData);
 
-        if (!productData.name && !productData.price) {
-            console.error('상품 정보 없음');
-            sendResponse({ success: false, error: '상품 정보를 찾을 수 없습니다.' });
-            return;
+            if (!productData.name && !productData.price) {
+                console.error('상품 정보 없음');
+                sendResponse({ success: false, error: '상품 정보를 찾을 수 없습니다.' });
+                return;
+            }
+
+            sendResponse({ success: true, data: productData });
+        } catch (error) {
+            console.error('상품 수집 오류:', error);
+            sendResponse({ success: false, error: error.message });
         }
-
-        sendResponse({ success: true, data: productData });
-    } catch (error) {
-        console.error('상품 수집 오류:', error);
-        sendResponse({ success: false, error: error.message });
-    }
+    })();
+    return true; // 비동기 응답을 위해 true 반환
 }
 
 /**

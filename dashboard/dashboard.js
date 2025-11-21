@@ -109,6 +109,9 @@ function setupEventListeners() {
             });
         }
     });
+
+    // 상품 클릭 이벤트 위임
+    setupProductClickDelegation();
 }
 
 /**
@@ -197,7 +200,7 @@ function renderProducts() {
         >
       </td>
       <td>
-        <div class="product-name">${product.name || '상품명 없음'}</div>
+        <div class="product-name" data-id="${product.id}">${product.name || '상품명 없음'}</div>
       </td>
       <td>
         <span class="platform-badge">${getPlatformName(product.platform)}</span>
@@ -214,6 +217,25 @@ function renderProducts() {
   `).join('');
 
     renderPagination();
+
+    // 이벤트 리스너 재연결 (기존 리스너 제거 후 새로 추가 방지 위해 델리게이션 사용 권장하지만, 여기서는 간단히 추가)
+    // 더 좋은 방법은 tbody에 이벤트 위임을 사용하는 것입니다.
+}
+
+// 이벤트 위임 설정 (setupEventListeners 함수 내에 추가해야 함)
+function setupProductClickDelegation() {
+    const tbody = document.getElementById('products-table-body');
+    if (tbody) {
+        tbody.addEventListener('click', (e) => {
+            const target = e.target;
+            if (target.classList.contains('product-name')) {
+                const id = target.dataset.id;
+                if (id) {
+                    location.href = `detail.html?id=${id}`;
+                }
+            }
+        });
+    }
 }
 
 /**
@@ -399,12 +421,24 @@ function getPlatformName(platform) {
     return names[platform] || platform;
 }
 
+const EXCHANGE_RATE = 1450; // 환율 설정 (1달러 = 1450원)
+
 function formatPrice(price) {
     if (!price) return '-';
-    return new Intl.NumberFormat('ko-KR', {
+
+    // 달러 표시
+    const usd = new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD'
+    }).format(price);
+
+    // 원화 환산 표시
+    const krw = new Intl.NumberFormat('ko-KR', {
         style: 'currency',
         currency: 'KRW'
-    }).format(price);
+    }).format(price * EXCHANGE_RATE);
+
+    return `${usd} <span style="color: #888; font-size: 0.9em;">(${krw})</span>`;
 }
 
 function formatDate(dateString) {

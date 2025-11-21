@@ -18,15 +18,15 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "lib/parser.js",
         "content/content-script.js",
-        "content/drag-selector.js",
-        "content/widget.js"
+        "content/drag-selector.js"
       ],
       "css": [
-        "styles/widget.css",
         "styles/overlay.css"
       ],
       "run_at": "document_end"
@@ -50,7 +50,9 @@
       "resources": [
         "assets/*"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

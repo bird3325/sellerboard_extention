@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>상품 상세 정보 - Sellerboard</title>
+    <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="detail.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- 사이드바 (대시보드와 동일) -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">S</div>
+                    <div class="logo-text">Sellerboard</div>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="dashboard.html" class="nav-item active">
+                    <span class="nav-icon">📦</span>
+                    <span>상품 목록</span>
+                </a>
+                <a href="dashboard.html" class="nav-item">
+                    <span class="nav-icon">📊</span>
+                    <span>통계</span>
+                </a>
+            </nav>
+        </div>
+
+        <!-- 메인 콘텐츠 -->
+        <div class="main-content">
+            <div class="content-header">
+                <div class="header-left">
+                    <button id="back-btn" class="back-btn">← 뒤로가기</button>
+                    <h1 class="page-title" id="product-name">상품 상세 정보</h1>
+                    <div class="breadcrumb">
+                        <span>상품 목록</span>
+                        <span class="separator">/</span>
+                        <span id="breadcrumb-name">상세 정보</span>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button class="btn-secondary" id="open-link-btn">
+                        <span>🔗</span> 원본 보기
+                    </button>
+                    <button class="btn-secondary" id="delete-btn">
+                        <span>🗑️</span> 삭제
+                    </button>
+                </div>
+            </div>
+
+            <div class="content-body">
+                <div class="detail-container" id="detail-container">
+                    <!-- 로딩 중 -->
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <p>데이터를 불러오는 중...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="detail.js"></script>
+</body>
+</html>
