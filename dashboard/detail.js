@@ -83,7 +83,7 @@ function renderProductDetail(product) {
         </div>
 
         <div class="product-detail-grid">
-            < !--이미지 갤러리-- >
+            <!--이미지 갤러리-->
             <div class="image-gallery">
                 <div class="main-image-container">
                     <img src="${product.images && product.images[0] ? product.images[0] : ''}" 
@@ -97,7 +97,7 @@ function renderProductDetail(product) {
                 </div>
             </div>
 
-            <!--상품 정보-- >
+            <!--상품 정보-->
             <div class="product-info">
                 <div class="product-info-card">
                     <div class="info-header">
@@ -127,9 +127,9 @@ function renderProductDetail(product) {
                     ${renderSpecs(product.specs)}
                 </div>
             </div>
-        </div >
+        </div>
 
-        < !--상세 설명-- >
+        <!--상세 설명-->
             <div class="description-section">
                 <h3 class="section-title">상세 설명</h3>
                 <div class="description-content">
@@ -149,10 +149,10 @@ function renderThumbnails(images) {
     if (!images || images.length === 0) return '';
 
     return images.map((img, index) => `
-            < img src = "${img}"
-        class="thumbnail ${index === 0 ? 'active' : ''}"
-        data - src="${img}"
-        onerror = "this.style.display='none'" >
+        <img src="${img}"
+             class="thumbnail ${index === 0 ? 'active' : ''}"
+             data-src="${img}"
+             onerror="this.style.display='none'">
             `).join('');
 }
 
@@ -160,7 +160,7 @@ function renderOptions(options) {
     if (!options || options.length === 0) return '';
 
     let html = `
-            < div class="options-section" >
+        <div class="options-section">
             <h3 class="section-title">옵션 목록 (${countTotalOptions(options)}개)</h3>
             <table class="options-table">
                 <thead>
@@ -168,6 +168,7 @@ function renderOptions(options) {
                         <th>옵션명</th>
                         <th>값</th>
                         <th>가격</th>
+                        <th>재고</th>
                         <th>이미지</th>
                     </tr>
                 </thead>
@@ -181,6 +182,7 @@ function renderOptions(options) {
                     <td>${optGroup.name}</td>
                     <td>${val.text || val.value}</td>
                     <td>${formatOptionPrice(val)}</td>
+                    <td>${formatStock(val.stock)}</td>
                     <td>
                         ${val.image ? `<img src="${val.image}" class="option-image" onerror="this.style.display='none'">` : '-'}
                     </td>
@@ -192,7 +194,7 @@ function renderOptions(options) {
     html += `
                 </tbody>
             </table>
-        </div >
+        </div>
             `;
 
     return html;
@@ -202,7 +204,7 @@ function renderSpecs(specs) {
     if (!specs || Object.keys(specs).length === 0) return '';
 
     let html = `
-            < div class="specs-section" style = "margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px;" >
+        <div class="specs-section" style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px;">
             <h3 class="section-title">제품 사양</h3>
             <table class="specs-table" style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
                 <tbody>
