@@ -1,481 +1,291 @@
 /**
- * 셀러보드 플로팅 위젯 - 동그란 버튼 + 팝업
+ * 셀러보드 플로팅 위젯 - 알리익스프레스 대응 완전판
+ * 드래그 + MutationObserver + Health Check
  */
 
-class SellerboardWidget {
-    constructor() {
-        this.widget = null;
-        this.popup = null;
-        this.isPopupOpen = false;
-        this.isDragging = false;
+console.log('[셀러보드] widget.js 로드됨');
+
+(function () {
+    'use strict';
+
+    if (window.sellerboardWidgetLoaded) {
+        console.log('[셀러보드] 이미 로드됨');
+        return;
+    }
+    window.sellerboardWidgetLoaded = true;
+
+    // 애니메이션 CSS
+    if (!document.getElementById('sb-animations')) {
+        document.head.insertAdjacentHTML('beforeend', `
+            <style id="sb-animations">
+                @keyframes sbSlideIn {
+                    from { opacity: 0; transform: translateX(20px) scale(0.95); }
+                    to { opacity: 1; transform: translateX(0) scale(1); }
+                }
+                @keyframes sbSlideOut {
+                    from { opacity: 1; transform: translateX(0) scale(1); }
+                    to { opacity: 0; transform: translateX(20px) scale(0.95); }
+                }
+                .sb-enter { animation: sbSlideIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+                .sb-exit { animation: sbSlideOut 0.2s ease-out forwards; }
+            </style>
+        `);
     }
 
-    /**
-     * 위젯 초기화
-     */
-    async init() {
-        // 위젯 생성
-        this.widget = document.createElement('div');
-        this.widget.id = 'sellerboard-widget';
-        this.widget.innerHTML = this.createFloatingButton();
-        document.body.appendChild(this.widget);
+    function initWidget() {
+        if (!document.body) {
+            setTimeout(initWidget, 100);
+            return;
+        }
 
-        // 팝업 생성
-        this.popup = document.createElement('div');
-        this.popup.id = 'sellerboard-popup';
-        this.popup.innerHTML = this.createPopupContent();
-        this.popup.style.display = 'none';
-        document.body.appendChild(this.popup);
+        console.log('[셀러보드] 위젯 초기화 중...');
 
-        // 이벤트 리스너 연결
-        this.attachEventListeners();
-
-        // 위젯 위치 불러오기
-        this.loadPosition();
-
-        console.log('셀러보드 위젯 초기화 완료');
-    }
-
-    /**
-     * Floating Button HTML
-     */
-    createFloatingButton() {
-        return `
-            <div class="sb-float-btn" id="sb-float-btn">
-                <div class="sb-float-logo">S</div>
+        // 위젯 HTML
+        const widgetHTML = `
+            <div id="sb-widget" style="position:fixed!important;z-index:2147483647!important;display:block!important;visibility:visible!important;pointer-events:auto!important;transform:translate3d(0,0,0)!important;isolation:isolate!important;top:20px;right:20px;">
+                <div id="sb-btn" style="width:50px!important;height:50px!important;background:linear-gradient(135deg,#6366f1,#4f46e5)!important;border-radius:50%!important;box-shadow:0 4px 12px rgba(99,102,241,0.4)!important;cursor:grab!important;display:flex!important;align-items:center!important;justify-content:center!important;color:white!important;font-weight:700!important;font-size:24px!important;font-family:system-ui,sans-serif!important;user-select:none!important;visibility:visible!important;transition:transform 0.2s!important;">S</div>
             </div>
         `;
-    }
 
-    /**
-     * 팝업 HTML
-     */
-    createPopupContent() {
-        return `
-            <div class="sb-popup-container">
-                <div class="sb-popup-header">
-                    <div class="sb-popup-title">
-                        <div class="sb-popup-logo">S</div>
+        // 팝업 HTML
+        const popupHTML = `
+            <div id="sb-popup" style="position:fixed!important;z-index:2147483646!important;width:320px!important;background:white!important;border-radius:16px!important;box-shadow:0 20px 60px rgba(0,0,0,0.3)!important;overflow:hidden!important;display:none!important;font-family:system-ui,sans-serif!important;top:80px;right:20px;">
+                <div id="sb-header" style="background:linear-gradient(135deg,#6366f1,#4f46e5)!important;padding:16px!important;display:flex!important;justify-content:space-between!important;align-items:center!important;cursor:move!important;user-select:none!important;">
+                    <div style="color:white!important;font-weight:600!important;font-size:16px!important;display:flex!important;align-items:center!important;gap:8px!important;">
+                        <div style="width:22px!important;height:22px!important;background:white!important;border-radius:4px!important;display:flex!important;align-items:center!important;justify-content:center!important;font-weight:700!important;font-size:13px!important;color:#6366f1!important;">S</div>
                         셀러보드
                     </div>
-                    <button class="sb-popup-close" id="sb-popup-close">✕</button>
+                    <button id="sb-close" style="background:rgba(255,255,255,0.2)!important;border:none!important;color:white!important;width:28px!important;height:28px!important;border-radius:6px!important;cursor:pointer!important;font-size:18px!important;">✕</button>
                 </div>
-
-                <div class="sb-popup-body">
-                    <!-- 기본 기능 버튼 -->
-                    <div class="sb-button-group">
-                        <button class="sb-btn primary" id="sb-collect-btn">
-                            <span class="sb-btn-icon">📦</span>
-                            상품 수집
+                <div style="padding:16px!important;">
+                    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+                        <button id="sb-collect" style="background:linear-gradient(135deg,#6366f1,#4f46e5)!important;color:white!important;border:none!important;padding:12px 16px!important;border-radius:10px!important;cursor:pointer!important;font-weight:600!important;font-size:14px!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;">
+                            <span>📦</span> 상품 수집
                         </button>
-
-                        <button class="sb-btn warning" id="sb-drag-mode-btn">
-                            <span class="sb-btn-icon">🎯</span>
-                            영역 드래그 선택
+                        <button id="sb-drag" style="background:linear-gradient(135deg,#f59e0b,#d97706)!important;color:white!important;border:none!important;padding:12px 16px!important;border-radius:10px!important;cursor:pointer!important;font-weight:600!important;font-size:14px!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;">
+                            <span>🎯</span> 영역 선택
                         </button>
                     </div>
-
-                    <!-- 상점 몰털이 토글 -->
-                    <div class="sb-toggle-container">
-                        <div class="sb-toggle-label">상점 몰털이</div>
-                        <label class="sb-toggle-switch">
-                            <input type="checkbox" class="sb-toggle-input" id="sb-store-mode-toggle">
-                            <span class="sb-toggle-slider"></span>
-                        </label>
-                    </div>
-
-                    <!-- 진행 상황 -->
-                    <div class="sb-progress-container" id="sb-progress-container" style="display: none;">
-                        <div class="sb-progress-text">
-                            <span id="sb-progress-label">수집 중...</span>
-                            <span class="sb-status-badge active" id="sb-progress-count">0 / 0</span>
+                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px;">
+                        <div style="background:rgba(99,102,241,0.05);padding:12px;border-radius:10px;text-align:center;">
+                            <div id="sb-today" style="font-size:24px;font-weight:700;color:#6366f1;">0</div>
+                            <div style="font-size:11px;color:#6b7280;margin-top:4px;">오늘 수집</div>
                         </div>
-                        <div class="sb-progress-bar">
-                            <div class="sb-progress-fill" id="sb-progress-fill" style="width: 0%"></div>
+                        <div style="background:rgba(99,102,241,0.05);padding:12px;border-radius:10px;text-align:center;">
+                            <div id="sb-total" style="font-size:24px;font-weight:700;color:#6366f1;">0</div>
+                            <div style="font-size:11px;color:#6b7280;margin-top:4px;">총 상품</div>
                         </div>
                     </div>
-
-                    <!-- 통계 -->
-                    <div class="sb-stats-grid">
-                        <div class="sb-stat-card">
-                            <span class="sb-stat-number" id="sb-stat-today">0</span>
-                            <span class="sb-stat-label">오늘 수집</span>
-                        </div>
-                        <div class="sb-stat-card">
-                            <span class="sb-stat-number" id="sb-stat-total">0</span>
-                            <span class="sb-stat-label">총 상품</span>
-                        </div>
-                    </div>
-
-                    <!-- 설정 -->
-                    <div class="sb-settings">
-                        <div class="sb-settings-item">
-                            <span class="sb-settings-label">대시보드</span>
-                            <button class="sb-btn secondary" id="sb-dashboard-btn">
-                                열기 →
-                            </button>
-                        </div>
+                    <div style="border-top:1px solid #e5e7eb;padding-top:12px;display:flex;justify-content:space-between;align-items:center;">
+                        <span style="color:#1f2937;font-weight:500;font-size:13px;">대시보드</span>
+                        <button id="sb-dashboard" style="background:rgba(99,102,241,0.1);color:#6366f1;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">열기 →</button>
                     </div>
                 </div>
             </div>
         `;
-    }
 
-    /**
-     * 이벤트 리스너 연결
-     */
-    attachEventListeners() {
-        // Floating button 클릭
-        document.getElementById('sb-float-btn')?.addEventListener('click', () => {
-            this.togglePopup();
+        // DOM에 추가
+        if (!document.getElementById('sb-widget')) {
+            document.body.insertAdjacentHTML('beforeend', widgetHTML);
+            document.body.insertAdjacentHTML('beforeend', popupHTML);
+            console.log('[셀러보드] ✅ 위젯 추가 완료');
+        }
+
+        const widget = document.getElementById('sb-widget');
+        const btn = document.getElementById('sb-btn');
+        const popup = document.getElementById('sb-popup');
+        const header = document.getElementById('sb-header');
+        const closeBtn = document.getElementById('sb-close');
+        const collectBtn = document.getElementById('sb-collect');
+        const dragBtn = document.getElementById('sb-drag');
+        const dashboardBtn = document.getElementById('sb-dashboard');
+
+        if (!widget || !popup) {
+            console.error('[셀러보드] 위젯 요소를 찾을 수 없음');
+            return;
+        }
+
+        // 알리익스프레스 보호
+        function ensureVisible() {
+            if (widget && document.body.contains(widget)) {
+                widget.style.cssText = `position:fixed!important;z-index:2147483647!important;display:block!important;visibility:visible!important;pointer-events:auto!important;transform:translate3d(0,0,0)!important;isolation:isolate!important;${widget.style.top ? 'top:' + widget.style.top + ';' : 'top:20px;'}${widget.style.left ? 'left:' + widget.style.left + ';' : ''}${widget.style.right ? 'right:' + widget.style.right + ';' : 'right:20px;'}`;
+                if (btn) btn.style.visibility = 'visible';
+            } else if (widget && !document.body.contains(widget)) {
+                console.log('[셀러보드] ⚠️ 위젯 복구 중...');
+                setTimeout(initWidget, 100);
+            }
+        }
+
+        const observer = new MutationObserver(() => {
+            if (!document.body.contains(widget)) {
+                console.log('[셀러보드] ⚠️ 위젯이 제거됨, 복구 중...');
+                setTimeout(initWidget, 100);
+            }
         });
+        observer.observe(document.body, { childList: true });
+        setInterval(ensureVisible, 2000);
 
-        // 팝업 닫기
-        document.getElementById('sb-popup-close')?.addEventListener('click', () => {
-            this.closePopup();
-        });
+        // 상태
+        let isOpen = false;
+        let dragging = false;
+        let dragType = null;
+        let startX = 0, startY = 0, initX = 0, initY = 0;
 
-        // 상품 수집
-        document.getElementById('sb-collect-btn')?.addEventListener('click', () => {
-            this.collectCurrentProduct();
-        });
-
-        // 드래그 모드
-        document.getElementById('sb-drag-mode-btn')?.addEventListener('click', () => {
-            this.toggleDragMode();
-        });
-
-        // 상점 몰털이
-        document.getElementById('sb-store-mode-toggle')?.addEventListener('change', (e) => {
-            this.toggleStoreMode(e.target.checked);
-        });
-
-        // 대시보드 열기
-        document.getElementById('sb-dashboard-btn')?.addEventListener('click', () => {
-            this.openDashboard();
-        });
-
-        // 팝업 외부 클릭 시 닫기
-        document.addEventListener('click', (e) => {
-            if (this.isPopupOpen &&
-                !this.popup.contains(e.target) &&
-                !this.widget.contains(e.target)) {
-                this.closePopup();
+        // 위치 복원
+        chrome.storage.local.get(['widgetPos'], (r) => {
+            if (r.widgetPos) {
+                widget.style.left = r.widgetPos.left + 'px';
+                widget.style.top = r.widgetPos.top + 'px';
+                widget.style.right = 'auto';
             }
         });
 
-        // 드래그 기능
-        const floatBtn = document.getElementById('sb-float-btn');
-        floatBtn.addEventListener('mousedown', (e) => this.startDrag(e));
-        document.addEventListener('mousemove', (e) => this.onDrag(e));
-        document.addEventListener('mouseup', () => this.stopDrag());
-
-        // 통계 업데이트
-        this.updateStats();
-    }
-
-    /**
-     * 팝업 토글
-     */
-    togglePopup() {
-        if (this.isPopupOpen) {
-            this.closePopup();
-        } else {
-            this.openPopup();
-        }
-    }
-
-    /**
-     * 팝업 열기
-     */
-    openPopup() {
-        this.popup.style.display = 'block';
-        this.isPopupOpen = true;
-        this.positionPopup();
-        this.updateStats();
-    }
-
-    /**
-     * 팝업 닫기
-     */
-    closePopup() {
-        this.popup.style.display = 'none';
-        this.isPopupOpen = false;
-    }
-
-    /**
-     * 팝업 위치 조정 (Floating button 근처에 표시)
-     */
-    positionPopup() {
-        const btnRect = this.widget.getBoundingClientRect();
-        const popupWidth = 320;
-        const popupHeight = 500;
-
-        let left = btnRect.right + 10;
-        let top = btnRect.top;
-
-        // 화면 오른쪽을 벗어나면 버튼 왼쪽에 표시
-        if (left + popupWidth > window.innerWidth) {
-            left = btnRect.left - popupWidth - 10;
-        }
-
-        // 화면 아래를 벗어나지 않도록
-        if (top + popupHeight > window.innerHeight) {
-            top = window.innerHeight - popupHeight - 20;
-        }
-
-        // 화면 위를 벗어나지 않도록
-        if (top < 20) {
-            top = 20;
-        }
-
-        this.popup.style.left = `${left}px`;
-        this.popup.style.top = `${top}px`;
-    }
-
-    /**
-     * 현재 페이지 상품 수집
-     */
-    async collectCurrentProduct() {
-        const btn = document.getElementById('sb-collect-btn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="sb-btn-icon">⏳</span> 수집 중...';
-
-        try {
-            console.log('상품 데이터 추출 시작');
-            const productData = await productParser.extractProductData();
-            console.log('추출된 상품 데이터:', productData);
-
-            if (!productData.name && !productData.price) {
-                throw new Error('상품 정보를 찾을 수 없습니다');
-            }
-
-            chrome.runtime.sendMessage({
-                action: 'saveProduct',
-                data: productData
-            }, (response) => {
-                if (chrome.runtime.lastError) {
-                    console.error('메시지 전송 오류:', chrome.runtime.lastError);
-                    throw new Error(chrome.runtime.lastError.message);
-                }
-
-                if (response?.success) {
-                    console.log('저장 성공!');
-                    btn.innerHTML = '<span class="sb-btn-icon">✓</span> 수집 완료!';
-                    btn.classList.add('success');
-                    this.updateStats();
-
-                    setTimeout(() => {
-                        btn.classList.remove('success');
-                        btn.innerHTML = '<span class="sb-btn-icon">📦</span> 상품 수집';
-                        btn.disabled = false;
-                    }, 2000);
-                } else {
-                    throw new Error(response?.error || '저장 실패');
-                }
-            });
-        } catch (error) {
-            console.error('상품 수집 실패:', error);
-            btn.innerHTML = '<span class="sb-btn-icon">✗</span> ' + (error.message || '수집 실패');
-            btn.classList.add('error');
-
-            setTimeout(() => {
-                btn.classList.remove('error');
-                btn.innerHTML = '<span class="sb-btn-icon">📦</span> 상품 수집';
-                btn.disabled = false;
-            }, 3000);
-        }
-    }
-
-    /**
-     * 드래그 모드 토글
-     */
-    toggleDragMode() {
-        if (window.dragSelector) {
-            window.dragSelector.toggle();
-        }
-    }
-
-    /**
-     * 상점 몰털이 모드 토글
-     */
-    async toggleStoreMode(enabled) {
-        if (enabled) {
-            console.log('상점 몰털이 시작');
-            const productLinks = productParser.extractProductLinks();
-            console.log('추출된 상품 링크:', productLinks.length, '개');
-
-            if (productLinks.length === 0) {
-                alert('수집할 상품을 찾을 수 없습니다.');
-                document.getElementById('sb-store-mode-toggle').checked = false;
-                return;
-            }
-
-            chrome.runtime.sendMessage({
-                action: 'startStoreScraping',
-                links: productLinks
-            });
-
-            this.showProgress(0, productLinks.length);
-        } else {
-            chrome.runtime.sendMessage({ action: 'stopStoreScraping' });
-            this.hideProgress();
-        }
-    }
-
-    /**
-     * 진행 상황 표시
-     */
-    showProgress(current, total) {
-        const container = document.getElementById('sb-progress-container');
-        const countEl = document.getElementById('sb-progress-count');
-        const fillEl = document.getElementById('sb-progress-fill');
-
-        container.style.display = 'block';
-        countEl.textContent = `${current} / ${total}`;
-
-        const percentage = total > 0 ? (current / total * 100) : 0;
-        fillEl.style.width = `${percentage}%`;
-    }
-
-    /**
-     * 진행 상황 숨기기
-     */
-    hideProgress() {
-        const container = document.getElementById('sb-progress-container');
-        container.style.display = 'none';
-    }
-
-    /**
-     * 통계 업데이트
-     */
-    async updateStats() {
-        chrome.runtime.sendMessage({ action: 'getStats' }, (response) => {
-            if (response) {
-                document.getElementById('sb-stat-today').textContent = response.today || 0;
-                document.getElementById('sb-stat-total').textContent = response.total || 0;
-            }
-        });
-    }
-
-    /**
-     * 대시보드 열기
-     */
-    openDashboard() {
-        chrome.runtime.sendMessage({ action: 'openDashboard' });
-    }
-
-    /**
-     * 위젯 드래그 시작
-     */
-    startDrag(e) {
-        if (this.isPopupOpen) return; // 팝업 열려있으면 드래그 불가
-
-        this.isDragging = true;
-        const rect = this.widget.getBoundingClientRect();
-        this.dragOffset = {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-        };
-        e.preventDefault();
-    }
-
-    /**
-     * 위젯 드래그 중
-     */
-    onDrag(e) {
-        if (!this.isDragging) return;
-
-        const x = e.clientX - this.dragOffset.x;
-        const y = e.clientY - this.dragOffset.y;
-
-        const maxX = window.innerWidth - this.widget.offsetWidth;
-        const maxY = window.innerHeight - this.widget.offsetHeight;
-
-        const boundedX = Math.max(0, Math.min(x, maxX));
-        const boundedY = Math.max(0, Math.min(y, maxY));
-
-        this.widget.style.left = `${boundedX}px`;
-        this.widget.style.top = `${boundedY}px`;
-        this.widget.style.right = 'auto';
-        this.widget.style.bottom = 'auto';
-    }
-
-    /**
-     * 위젯 드래그 종료
-     */
-    stopDrag() {
-        if (this.isDragging) {
-            this.isDragging = false;
-            this.savePosition();
-        }
-    }
-
-    /**
-     * 위젯 위치 저장
-     */
-    savePosition() {
-        const rect = this.widget.getBoundingClientRect();
-        chrome.storage.local.set({
-            widgetPosition: {
-                left: rect.left,
-                top: rect.top
-            }
-        });
-    }
-
-    /**
-     * 위젯 위치 불러오기
-     */
-    loadPosition() {
-        chrome.storage.local.get(['widgetPosition'], (result) => {
-            if (result.widgetPosition) {
-                this.widget.style.left = `${result.widgetPosition.left}px`;
-                this.widget.style.top = `${result.widgetPosition.top}px`;
-                this.widget.style.right = 'auto';
-                this.widget.style.bottom = 'auto';
-            }
-        });
-    }
-
-    /**
-     * 메시지 리스너 등록
-     */
-    setupMessageListener() {
-        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-            if (message.action === 'updateProgress') {
-                this.showProgress(message.current, message.total);
-            } else if (message.action === 'scrapingComplete') {
-                this.hideProgress();
-                document.getElementById('sb-store-mode-toggle').checked = false;
-                this.updateStats();
-
-                const btn = document.getElementById('sb-collect-btn');
-                btn.innerHTML = '<span class="sb-btn-icon">✓</span> 몰털이 완료!';
-                btn.classList.add('success');
-
+        // 팝업 토글
+        window.sellerboardWidget = {
+            open: () => {
+                isOpen = true;
+                popup.style.display = 'block';
+                popup.classList.add('sb-enter');
+                popup.classList.remove('sb-exit');
+                btn.style.display = 'none';
+                chrome.runtime.sendMessage({ action: 'getStats' }, (r) => {
+                    if (r) {
+                        document.getElementById('sb-today').textContent = r.today || 0;
+                        document.getElementById('sb-total').textContent = r.total || 0;
+                    }
+                });
+            },
+            close: () => {
+                isOpen = false;
+                popup.classList.add('sb-exit');
+                popup.classList.remove('sb-enter');
                 setTimeout(() => {
-                    btn.classList.remove('success');
-                    btn.innerHTML = '<span class="sb-btn-icon">📦</span> 상품 수집';
+                    if (!isOpen) {
+                        popup.style.display = 'none';
+                        btn.style.display = 'flex';
+                    }
+                }, 200);
+            }
+        };
+
+        // 드래그
+        btn.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            dragging = true;
+            dragType = 'widget';
+            const r = widget.getBoundingClientRect();
+            startX = e.clientX;
+            startY = e.clientY;
+            initX = r.left;
+            initY = r.top;
+            btn.style.cursor = 'grabbing';
+            e.preventDefault();
+        });
+
+        header.addEventListener('mousedown', (e) => {
+            if (e.button !== 0 || e.target.id === 'sb-close') return;
+            dragging = true;
+            dragType = 'popup';
+            const r = popup.getBoundingClientRect();
+            startX = e.clientX;
+            startY = e.clientY;
+            initX = r.left;
+            initY = r.top;
+            header.style.cursor = 'grabbing';
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            let x = initX + dx;
+            let y = initY + dy;
+
+            if (dragType === 'widget') {
+                x = Math.max(0, Math.min(x, window.innerWidth - 50));
+                y = Math.max(0, Math.min(y, window.innerHeight - 50));
+                widget.style.left = x + 'px';
+                widget.style.top = y + 'px';
+                widget.style.right = 'auto';
+            } else if (dragType === 'popup') {
+                x = Math.max(0, Math.min(x, window.innerWidth - 320));
+                y = Math.max(0, Math.min(y, window.innerHeight - popup.offsetHeight));
+                popup.style.left = x + 'px';
+                popup.style.top = y + 'px';
+                popup.style.right = 'auto';
+            }
+        });
+
+        document.addEventListener('mouseup', (e) => {
+            if (dragging && dragType === 'widget') {
+                const moved = Math.abs(e.clientX - startX) > 5 || Math.abs(e.clientY - startY) > 5;
+                dragging = false;
+                dragType = null;
+                btn.style.cursor = 'grab';
+                const r = widget.getBoundingClientRect();
+                chrome.storage.local.set({ widgetPos: { left: r.left, top: r.top } });
+                if (!moved) window.sellerboardWidget.open();
+            } else if (dragging) {
+                dragging = false;
+                dragType = null;
+                header.style.cursor = 'move';
+            }
+        });
+
+        // 이벤트
+        btn.addEventListener('mouseenter', () => !dragging && (btn.style.transform = 'scale(1.1)'));
+        btn.addEventListener('mouseleave', () => !dragging && (btn.style.transform = 'scale(1)'));
+        closeBtn.addEventListener('click', () => window.sellerboardWidget.close());
+        closeBtn.addEventListener('mouseenter', () => closeBtn.style.background = 'rgba(255,255,255,0.3)');
+        closeBtn.addEventListener('mouseleave', () => closeBtn.style.background = 'rgba(255,255,255,0.2)');
+
+        collectBtn.addEventListener('click', async () => {
+            collectBtn.innerHTML = '<span>⏳</span> 수집 중...';
+            collectBtn.disabled = true;
+            try {
+                if (typeof productParser !== 'undefined') {
+                    const data = await productParser.extractProductData();
+                    chrome.runtime.sendMessage({ action: 'saveProduct', data }, (r) => {
+                        if (r?.success) {
+                            collectBtn.innerHTML = '<span>✓</span> 완료!';
+                            collectBtn.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+                            setTimeout(() => {
+                                collectBtn.innerHTML = '<span>📦</span> 상품 수집';
+                                collectBtn.style.background = 'linear-gradient(135deg, #6366f1, #4f46e5)';
+                                collectBtn.disabled = false;
+                            }, 2000);
+                        } else throw new Error(r?.error || '실패');
+                    });
+                } else throw new Error('Parser 없음');
+            } catch (e) {
+                collectBtn.innerHTML = '<span>✗</span> 실패';
+                collectBtn.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
+                setTimeout(() => {
+                    collectBtn.innerHTML = '<span>📦</span> 상품 수집';
+                    collectBtn.style.background = 'linear-gradient(135deg, #6366f1, #4f46e5)';
+                    collectBtn.disabled = false;
                 }, 3000);
             }
         });
-    }
-}
 
-// 위젯 초기화
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', async () => {
-        const widget = new SellerboardWidget();
-        await widget.init();
-        widget.setupMessageListener();
-        window.sellerboardWidget = widget;
-    });
-} else {
-    (async () => {
-        const widget = new SellerboardWidget();
-        await widget.init();
-        widget.setupMessageListener();
-        window.sellerboardWidget = widget;
-    })();
-}
+        dragBtn.addEventListener('click', () => {
+            if (window.dragSelector) window.dragSelector.toggle();
+            window.sellerboardWidget.close();
+        });
+
+        dashboardBtn.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'openDashboard' }));
+        dashboardBtn.addEventListener('mouseenter', () => dashboardBtn.style.background = 'rgba(99,102,241,0.2)');
+        dashboardBtn.addEventListener('mouseleave', () => dashboardBtn.style.background = 'rgba(99,102,241,0.1)');
+
+        console.log('[셀러보드] ✅ 초기화 완료!');
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initWidget);
+    } else {
+        initWidget();
+    }
+})();
+
+console.log('[셀러보드] widget.js 실행 완료');
