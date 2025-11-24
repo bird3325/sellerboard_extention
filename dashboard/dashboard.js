@@ -77,11 +77,12 @@ function switchView(view) {
         stats: '통계',
         profiles: '프로필',
         schedules: '스케줄',
-        export: '내보내기'
+        export: '내보내기',
+        settings: '설정'
     };
 
-    document.getElementById('page-title').textContent = titles[view];
-    document.getElementById('breadcrumb-current').textContent = titles[view];
+    document.getElementById('page-title').textContent = titles[view] || '셀러보드';
+    document.getElementById('breadcrumb-current').textContent = titles[view] || view;
 
     // 뷰별 데이터 로드
     if (view === 'stats') {
@@ -90,6 +91,14 @@ function switchView(view) {
         loadProfiles();
     } else if (view === 'schedules') {
         loadSchedules();
+    } else if (view === 'settings') {
+        console.log('Switching to settings view');
+        if (typeof SettingsManager !== 'undefined') {
+            console.log('Initializing SettingsManager');
+            SettingsManager.init();
+        } else {
+            console.error('SettingsManager is not defined');
+        }
     }
 }
 

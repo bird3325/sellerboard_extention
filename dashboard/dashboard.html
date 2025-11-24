@@ -7,6 +7,7 @@
     <title>셀러보드 대시보드</title>
     <link rel="stylesheet" href="dashboard.css">
     <link rel="stylesheet" href="sidebar-toggle.css">
+    <link rel="stylesheet" href="settings.css">
 </head>
 
 <body>
@@ -41,6 +42,10 @@
                 <a href="#" class="nav-item" data-view="export">
                     <span class="nav-icon">📤</span>
                     <span class="nav-label">내보내기</span>
+                </a>
+                <a href="#" class="nav-item" data-view="settings">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-label">설정</span>
                 </a>
             </nav>
         </aside>
@@ -220,11 +225,83 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- 설정 뷰 -->
+                <div id="view-settings" class="view">
+                    <div class="settings-container">
+                        <!-- 스크래핑 대상 사이트 -->
+                        <section class="settings-section">
+                            <h2 class="section-title">스크래핑 대상 사이트</h2>
+                            <p class="section-description">상품 정보를 수집할 플랫폼을 선택하세요.</p>
+
+                            <div class="platform-grid" id="platform-grid">
+                                <!-- 플랫폼 목록이 여기에 동적으로 추가됩니다 -->
+                            </div>
+                        </section>
+
+                        <!-- 내보내기 설정 -->
+                        <section class="settings-section">
+                            <h2 class="section-title">내보내기 설정</h2>
+                            <p class="section-description">상품 정보 저장 방식을 선택하세요.</p>
+
+                            <div class="radio-group">
+                                <label class="radio-label">
+                                    <input type="radio" name="export-mode" value="local" checked>
+                                    <span class="radio-text">
+                                        <strong>로컬 저장</strong>
+                                        <small>브라우저에 저장하고 수동으로 내보내기</small>
+                                    </span>
+                                </label>
+
+                                <label class="radio-label">
+                                    <input type="radio" name="export-mode" value="googleSheets">
+                                    <span class="radio-text">
+                                        <strong>구글 시트 자동 저장</strong>
+                                        <small>수집 즉시 구글 시트에 자동 저장</small>
+                                    </span>
+                                </label>
+                            </div>
+
+                            <!-- 구글 시트 설정 -->
+                            <div id="google-sheets-settings" class="subsection" style="display: none;">
+                                <h3 class="subsection-title">구글 시트 연동</h3>
+
+                                <div class="auth-status" id="auth-status">
+                                    <span class="status-icon">🔒</span>
+                                    <span class="status-text">연동되지 않음</span>
+                                </div>
+
+                                <button id="auth-google-btn" class="btn-primary">구글 계정 연동</button>
+
+                                <div id="sheet-config" style="display: none;">
+                                    <div class="form-group">
+                                        <label class="form-label">스프레드시트 ID</label>
+                                        <input type="text" id="spreadsheet-id" placeholder="1ABC123..."
+                                            class="input-field">
+                                        <small class="form-hint">URL에서 /d/ 다음의 ID 복사</small>
+                                    </div>
+
+                                    <div class="form-group">
+                                        <label class="form-label">시트 이름</label>
+                                        <input type="text" id="sheet-name" value="Products" class="input-field">
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 저장 버튼 -->
+                        <div class="settings-actions">
+                            <button id="save-settings-btn" class="btn-primary btn-large">설정 저장</button>
+                            <button id="cancel-settings-btn" class="btn-secondary btn-large">취소</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </main>
     </div>
 
     <script src="dashboard.js"></script>
+    <script src="settings.js"></script>
 </body>
 
 </html>
