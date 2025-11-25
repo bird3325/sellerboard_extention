@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>마진 분석 - Sellerboard</title>
+    <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="sidebar-toggle.css">
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <!-- 사이드바 -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">S</div>
+                    <span class="logo-text">셀러보드</span>
+                    <button class="sidebar-toggle" id="sidebar-toggle" title="메뉴 접기/펼치기"></button>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="dashboard.html" class="nav-item">
+                    <span class="nav-icon">📦</span>
+                    <span class="nav-label">상품 목록</span>
+                </a>
+                <a href="api-management.html" class="nav-item">
+                    <span class="nav-icon">🔑</span>
+                    <span class="nav-label">API 관리</span>
+                </a>
+                <a href="monitoring.html" class="nav-item">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-label">모니터링</span>
+                </a>
+                <a href="margin-analysis.html" class="nav-item active">
+                    <span class="nav-icon">💰</span>
+                    <span class="nav-label">마진 분석</span>
+                </a>
+                <a href="auto-register.html" class="nav-item">
+                    <span class="nav-icon">🤖</span>
+                    <span class="nav-label">자동 등록</span>
+                </a>
+                <a href="notifications.html" class="nav-item">
+                    <span class="nav-icon">🔔</span>
+                    <span class="nav-label">알림 센터</span>
+                </a>
+                <a href="reports.html" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-label">리포트</span>
+                </a>
+                <a href="settings.html" class="nav-item">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-label">설정</span>
+                </a>
+            </nav>
+        </aside>
+        <main class="main-content">
+            <div class="page-header">
+                <h1>마진 분석</h1>
+                <p>수익률 계산 및 분석</p>
+            </div>
+            <div
+                style="background:white;padding:32px;border-radius:12px;border:1px solid #e5e7eb;max-width:700px;margin-top:24px;">
+                <h3 style="margin:0 0 24px 0;">마진 계산기</h3>
+                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;">
+                    <div>
+                        <label style="display:block;margin-bottom:8px;font-weight:600;color:#374151;">소싱 가격</label>
+                        <input type="number" id="source-price" placeholder="원가"
+                            style="width:100%;padding:10px 12px;border:2px solid #e5e7eb;border-radius:8px;font-size:14px;">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:8px;font-weight:600;color:#374151;">판매 가격</label>
+                        <input type="number" id="sell-price" placeholder="판매가"
+                            style="width:100%;padding:10px 12px;border:2px solid #e5e7eb;border-radius:8px;font-size:14px;">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:8px;font-weight:600;color:#374151;">수수료 (%)</label>
+                        <input type="number" id="commission" value="10"
+                            style="width:100%;padding:10px 12px;border:2px solid #e5e7eb;border-radius:8px;font-size:14px;">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:8px;font-weight:600;color:#374151;">배송비</label>
+                        <input type="number" id="shipping" value="3000"
+                            style="width:100%;padding:10px 12px;border:2px solid #e5e7eb;border-radius:8px;font-size:14px;">
+                    </div>
+                </div>
+                <button id="calculate"
+                    style="margin-top:24px;padding:12px 24px;background:#6366f1;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">계산</button>
+                <div id="result"
+                    style="margin-top:24px;padding:20px;background:#f9fafb;border-radius:8px;display:none;">
+                    <h4 style="margin:0 0 12px 0;">분석 결과</h4>
+                    <p style="margin:8px 0;"><strong>순이익:</strong> <span id="profit"
+                            style="color:#10b981;font-size:20px;font-weight:700;">0</span>원</p>
+                    <p style="margin:8px 0;"><strong>마진율:</strong> <span id="margin-rate"
+                            style="color:#6366f1;font-size:20px;font-weight:700;">0</span>%</p>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script>
+        document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar) {
+                sidebar.classList.toggle('collapsed');
+                localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+            }
+        });
+        const collapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        if (collapsed) document.querySelector('.sidebar')?.classList.add('collapsed');
+
+        document.getElementById('calculate')?.addEventListener('click', () => {
+            const source = parseFloat(document.getElementById('source-price').value) || 0;
+            const sell = parseFloat(document.getElementById('sell-price').value) || 0;
+            const commission = parseFloat(document.getElementById('commission').value) || 0;
+            const shipping = parseFloat(document.getElementById('shipping').value) || 0;
+
+            const commissionFee = sell * (commission / 100);
+            const profit = sell - source - commissionFee - shipping;
+            const marginRate = sell > 0 ? ((profit / sell) * 100).toFixed(2) : 0;
+
+            document.getElementById('profit').textContent = profit.toLocaleString();
+            document.getElementById('margin-rate').textContent = marginRate;
+            document.getElementById('result').style.display = 'block';
+        });
+    </script>
+</body>
+
+</html>

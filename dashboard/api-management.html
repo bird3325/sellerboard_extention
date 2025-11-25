@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API 관리 - Sellerboard</title>
+    <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="sidebar-toggle.css">
+    <link rel="stylesheet" href="api-management.css">
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <!-- 사이드바 -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">S</div>
+                    <span class="logo-text">셀러보드</span>
+                    <button class="sidebar-toggle" id="sidebar-toggle" title="메뉴 접기/펼치기"></button>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="dashboard.html" class="nav-item">
+                    <span class="nav-icon">📦</span>
+                    <span class="nav-label">상품 목록</span>
+                </a>
+                <a href="api-management.html" class="nav-item active">
+                    <span class="nav-icon">🔑</span>
+                    <span class="nav-label">API 관리</span>
+                </a>
+                <a href="monitoring.html" class="nav-item">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-label">모니터링</span>
+                </a>
+                <a href="margin-analysis.html" class="nav-item">
+                    <span class="nav-icon">💰</span>
+                    <span class="nav-label">마진 분석</span>
+                </a>
+                <a href="auto-register.html" class="nav-item">
+                    <span class="nav-icon">🤖</span>
+                    <span class="nav-label">자동 등록</span>
+                </a>
+                <a href="notifications.html" class="nav-item">
+                    <span class="nav-icon">🔔</span>
+                    <span class="nav-label">알림 센터</span>
+                </a>
+                <a href="reports.html" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-label">리포트</span>
+                </a>
+                <a href="settings.html" class="nav-item">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-label">설정</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- 메인 콘텐츠 -->
+        <main class="main-content">
+            <div class="page-header">
+                <h1>API 관리</h1>
+                <p>플랫폼 API 연동 및 설정</p>
+            </div>
+
+            <!-- API 목록 -->
+            <div class="api-grid" id="api-grid">
+                <!-- JavaScript로 동적 생성 -->
+            </div>
+
+            <!-- API 추가 모달 (숨김) -->
+            <div id="api-modal" class="modal" style="display:none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 id="modal-title">API 추가</h2>
+                        <button class="modal-close" id="modal-close">✕</button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="api-form">
+                            <div class="form-group">
+                                <label>플랫폼</label>
+                                <select id="platform" required>
+                                    <option value="">선택하세요</option>
+                                    <option value="naver">네이버 스마트스토어</option>
+                                    <option value="coupang">쿠팡</option>
+                                    <option value="cafe24">카페24</option>
+                                    <option value="godo">고도몰</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>API Key</label>
+                                <input type="text" id="api-key" required>
+                            </div>
+                            <div class="form-group">
+                                <label>API Secret</label>
+                                <input type="password" id="api-secret" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Endpoint URL</label>
+                                <input type="url" id="endpoint-url" placeholder="https://...">
+                            </div>
+                            <div class="form-actions">
+                                <button type="button" class="btn secondary" id="test-connection">연결 테스트</button>
+                                <button type="submit" class="btn primary">저장</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="api-management.js"></script>
+    <script>
+        // 사이드바 토글
+        document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar) {
+                sidebar.classList.toggle('collapsed');
+                localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+            }
+        });
+        // 저장된 상태 복원
+        const collapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        if (collapsed) {
+            document.querySelector('.sidebar')?.classList.add('collapsed');
+        }
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>자동 등록 - Sellerboard</title>
+    <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="sidebar-toggle.css">
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <!-- 사이드바 -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">S</div>
+                    <span class="logo-text">셀러보드</span>
+                    <button class="sidebar-toggle" id="sidebar-toggle" title="메뉴 접기/펼치기"></button>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="dashboard.html" class="nav-item">
+                    <span class="nav-icon">📦</span>
+                    <span class="nav-label">상품 목록</span>
+                </a>
+                <a href="api-management.html" class="nav-item">
+                    <span class="nav-icon">🔑</span>
+                    <span class="nav-label">API 관리</span>
+                </a>
+                <a href="monitoring.html" class="nav-item">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-label">모니터링</span>
+                </a>
+                <a href="margin-analysis.html" class="nav-item">
+                    <span class="nav-icon">💰</span>
+                    <span class="nav-label">마진 분석</span>
+                </a>
+                <a href="auto-register.html" class="nav-item active">
+                    <span class="nav-icon">🤖</span>
+                    <span class="nav-label">자동 등록</span>
+                </a>
+                <a href="notifications.html" class="nav-item">
+                    <span class="nav-icon">🔔</span>
+                    <span class="nav-label">알림 센터</span>
+                </a>
+                <a href="reports.html" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-label">리포트</span>
+                </a>
+                <a href="settings.html" class="nav-item">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-label">설정</span>
+                </a>
+            </nav>
+        </aside>
+        <main class="main-content">
+            <div class="page-header">
+                <h1>자동 등록 관리</h1>
+                <p>플랫폼별 상품 자동 등록</p>
+            </div>
+            <div style="margin-top:24px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                    <h3 style="margin:0;">등록 대기 상품</h3>
+                    <button id="start-register"
+                        style="padding:10px 20px;background:#10b981;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">등록
+                        시작</button>
+                </div>
+                <div
+                    style="background:white;border:1px solid #e5e7eb;border-radius:12px;padding:40px;text-align:center;">
+                    <div style="font-size:48px;margin-bottom:16px;">🤖</div>
+                    <p style="color:#9ca3af;margin:0;">등록 대기 상품이 없습니다.</p>
+                    <p style="color:#9ca3af;margin:8px 0 0 0;font-size:14px;">API 설정 후 상품을 수집하면 자동으로 등록 가능합니다.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script>
+        document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar) {
+                sidebar.classList.toggle('collapsed');
+                localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+            }
+        });
+        const collapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        if (collapsed) document.querySelector('.sidebar')?.classList.add('collapsed');
+
+        document.getElementById('start-register')?.addEventListener('click', () => {
+            alert('자동 등록 기능은 API 설정이 필요합니다.\\n\\nAPI 관리 페이지에서 플랫폼을 연동한 후 사용하세요.');
+        });
+    </script>
+</body>
+
+</html>

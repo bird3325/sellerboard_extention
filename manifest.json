@@ -46,7 +46,8 @@
         "content/widget.js"
       ],
       "css": [
-        "styles/overlay.css"
+        "styles/overlay.css",
+        "styles/widget-modes.css"
       ],
       "run_at": "document_end"
     }
@@ -69,6 +70,7 @@
       "resources": [
         "assets/*",
         "styles/widget.css",
+        "styles/widget-modes.css",
         "lib/platform-detector.js",
         "parsers/base-parser.js",
         "parsers/parser-manager.js",

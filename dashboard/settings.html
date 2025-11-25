@@ -6,8 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>설정 - Sellerboard</title>
     <link rel="stylesheet" href="dashboard.css">
-    <link rel="stylesheet" href="settings.css">
     <link rel="stylesheet" href="sidebar-toggle.css">
+    <link rel="stylesheet" href="settings.css">
 </head>
 
 <body>
@@ -27,21 +27,29 @@
                     <span class="nav-icon">📦</span>
                     <span class="nav-label">상품 목록</span>
                 </a>
-                <a href="dashboard.html#stats" class="nav-item">
-                    <span class="nav-icon">📊</span>
-                    <span class="nav-label">통계</span>
+                <a href="api-management.html" class="nav-item">
+                    <span class="nav-icon">🔑</span>
+                    <span class="nav-label">API 관리</span>
                 </a>
-                <a href="dashboard.html#profiles" class="nav-item">
-                    <span class="nav-icon">👤</span>
-                    <span class="nav-label">프로필</span>
+                <a href="monitoring.html" class="nav-item">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-label">모니터링</span>
                 </a>
-                <a href="dashboard.html#schedules" class="nav-item">
-                    <span class="nav-icon">⏰</span>
-                    <span class="nav-label">스케줄</span>
+                <a href="margin-analysis.html" class="nav-item">
+                    <span class="nav-icon">💰</span>
+                    <span class="nav-label">마진 분석</span>
                 </a>
-                <a href="dashboard.html#export" class="nav-item">
-                    <span class="nav-icon">📤</span>
-                    <span class="nav-label">내보내기</span>
+                <a href="auto-register.html" class="nav-item">
+                    <span class="nav-icon">🤖</span>
+                    <span class="nav-label">자동 등록</span>
+                </a>
+                <a href="notifications.html" class="nav-item">
+                    <span class="nav-icon">🔔</span>
+                    <span class="nav-label">알림 센터</span>
+                </a>
+                <a href="reports.html" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-label">리포트</span>
                 </a>
                 <a href="settings.html" class="nav-item active">
                     <span class="nav-icon">⚙️</span>
@@ -52,74 +60,86 @@
 
         <!-- 메인 콘텐츠 -->
         <main class="main-content">
-            <!-- 헤더 -->
-            <header class="content-header">
-                <div class="header-left">
-                    <h1 class="page-title">설정</h1>
-                    <div class="breadcrumb">
-                        <span>대시보드</span>
-                        <span class="separator">›</span>
+            <div class="page-header">
+                <h1>설정</h1>
+                <p>시스템 설정 및 환경 구성</p>
+            </div>
 
-                        <!-- 내보내기 설정 -->
-                        <section class="settings-section">
-                            <h2 class="section-title">내보내기 설정</h2>
-                            <p class="section-description">상품 정보 저장 방식을 선택하세요.</p>
+            <div style="margin-top:24px;">
+                <!-- 내보내기 설정 -->
+                <section
+                    style="background:white;padding:32px;border-radius:12px;border:1px solid #e5e7eb;margin-bottom:24px;">
+                    <h2 style="margin:0 0 8px 0;font-size:20px;">내보내기 설정</h2>
+                    <p style="margin:0 0 24px 0;color:#6b7280;">상품 정보 저장 방식을 선택하세요.</p>
 
-                            <div class="radio-group">
-                                <label class="radio-label">
-                                    <input type="radio" name="export-mode" value="local" checked>
-                                    <span class="radio-text">
-                                        <strong>로컬 저장</strong>
-                                        <small>브라우저에 저장하고 수동으로 내보내기</small>
-                                    </span>
-                                </label>
+                    <div class="radio-group">
+                        <label
+                            style="display:flex;align-items:flex-start;padding:16px;border:2px solid #e5e7eb;border-radius:8px;cursor:pointer;margin-bottom:12px;">
+                            <input type="radio" name="export-mode" value="local" checked
+                                style="margin-top:4px;margin-right:12px;">
+                            <span>
+                                <strong style="display:block;margin-bottom:4px;">로컬 저장</strong>
+                                <small style="color:#6b7280;">브라우저에 저장하고 수동으로 내보내기</small>
+                            </span>
+                        </label>
 
-                                <label class="radio-label">
-                                    <input type="radio" name="export-mode" value="googleSheets">
-                                    <span class="radio-text">
-                                        <strong>구글 시트 자동 저장</strong>
-                                        <small>수집 즉시 구글 시트에 자동 저장</small>
-                                    </span>
-                                </label>
-                            </div>
-
-                            <!-- 구글 시트 설정 -->
-                            <div id="google-sheets-settings" class="subsection" style="display: none;">
-                                <h3 class="subsection-title">구글 시트 연동</h3>
-
-                                <div class="auth-status" id="auth-status">
-                                    <span class="status-icon">🔒</span>
-                                    <span class="status-text">연동되지 않음</span>
-                                </div>
-
-                                <button id="auth-google-btn" class="btn-primary">구글 계정 연동</button>
-
-                                <div id="sheet-config" style="display: none;">
-                                    <div class="form-group">
-                                        <label class="form-label">스프레드시트 ID</label>
-                                        <input type="text" id="spreadsheet-id" placeholder="1ABC123..."
-                                            class="input-field">
-                                        <small class="form-hint">URL에서 /d/ 다음의 ID 복사</small>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label class="form-label">시트 이름</label>
-                                        <input type="text" id="sheet-name" value="Products" class="input-field">
-                                    </div>
-                                </div>
-                            </div>
-                        </section>
-
-                        <!-- 저장 버튼 -->
-                        <div class="settings-actions">
-                            <button id="save-settings-btn" class="btn-primary btn-large">설정 저장</button>
-                            <button id="cancel-settings-btn" class="btn-secondary btn-large">취소</button>
-                        </div>
+                        <label
+                            style="display:flex;align-items:flex-start;padding:16px;border:2px solid #e5e7eb;border-radius:8px;cursor:pointer;">
+                            <input type="radio" name="export-mode" value="googleSheets"
+                                style="margin-top:4px;margin-right:12px;">
+                            <span>
+                                <strong style="display:block;margin-bottom:4px;">구글 시트 자동 저장</strong>
+                                <small style="color:#6b7280;">수집 즉시 구글 시트에 자동 저장 (개발 예정)</small>
+                            </span>
+                        </label>
                     </div>
+                </section>
+
+                <!-- 저장 버튼 -->
+                <div style="display:flex;gap:12px;justify-content:flex-end;">
+                    <button id="save-settings-btn"
+                        style="padding:12px 24px;background:#6366f1;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">설정
+                        저장</button>
+                    <button id="cancel-settings-btn"
+                        style="padding:12px 24px;background:#e5e7eb;color:#374151;border:none;border-radius:8px;cursor:pointer;font-weight:600;">취소</button>
                 </div>
+            </div>
         </main>
     </div>
 
+    <script>
+        document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar) {
+                sidebar.classList.toggle('collapsed');
+                localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+            }
+        });
+        // 저장된 상태 복원
+        const collapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        if (collapsed) {
+            document.querySelector('.sidebar')?.classList.add('collapsed');
+        }
+
+        // 설정 저장
+        document.getElementById('save-settings-btn')?.addEventListener('click', () => {
+            const exportMode = document.querySelector('input[name="export-mode"]:checked')?.value;
+            if (exportMode) {
+                localStorage.setItem('exportMode', exportMode);
+                alert('설정이 저장되었습니다.');
+            }
+        });
+
+        // 취소
+        document.getElementById('cancel-settings-btn')?.addEventListener('click', () => {
+            window.location.href = 'dashboard.html';
+        });
+
+        // 저장된 설정 로드
+        const savedMode = localStorage.getItem('exportMode') || 'local';
+        const modeInput = document.querySelector(`input[name="export-mode"][value="${savedMode}"]`);
+        if (modeInput) modeInput.checked = true;
+    </script>
     <script src="settings.js"></script>
 </body>
 

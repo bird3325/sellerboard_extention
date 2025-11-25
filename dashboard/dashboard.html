@@ -4,10 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>셀러보드 대시보드</title>
+    <title>상품 목록 - Sellerboard</title>
     <link rel="stylesheet" href="dashboard.css">
     <link rel="stylesheet" href="sidebar-toggle.css">
-    <link rel="stylesheet" href="settings.css">
 </head>
 
 <body>
@@ -23,16 +22,38 @@
             </div>
 
             <nav class="sidebar-nav">
-                <a href="#" class="nav-item active" data-view="products">
+                <a href="dashboard.html" class="nav-item active">
                     <span class="nav-icon">📦</span>
-                    <a href="#" class="nav-item" data-view="export">
-                        <span class="nav-icon">📤</span>
-                        <span class="nav-label">내보내기</span>
-                    </a>
-                    <a href="#" class="nav-item" data-view="settings">
-                        <span class="nav-icon">⚙️</span>
-                        <span class="nav-label">설정</span>
-                    </a>
+                    <span class="nav-label">상품 목록</span>
+                </a>
+                <a href="api-management.html" class="nav-item">
+                    <span class="nav-icon">🔑</span>
+                    <span class="nav-label">API 관리</span>
+                </a>
+                <a href="monitoring.html" class="nav-item">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-label">모니터링</span>
+                </a>
+                <a href="margin-analysis.html" class="nav-item">
+                    <span class="nav-icon">💰</span>
+                    <span class="nav-label">마진 분석</span>
+                </a>
+                <a href="auto-register.html" class="nav-item">
+                    <span class="nav-icon">🤖</span>
+                    <span class="nav-label">자동 등록</span>
+                </a>
+                <a href="notifications.html" class="nav-item">
+                    <span class="nav-icon">🔔</span>
+                    <span class="nav-label">알림 센터</span>
+                </a>
+                <a href="reports.html" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-label">리포트</span>
+                </a>
+                <a href="settings.html" class="nav-item">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-label">설정</span>
+                </a>
             </nav>
         </aside>
 
@@ -41,11 +62,11 @@
             <!-- 헤더 -->
             <header class="content-header">
                 <div class="header-left">
-                    <h1 class="page-title" id="page-title">상품 목록</h1>
+                    <h1 class="page-title">상품 목록</h1>
                     <div class="breadcrumb">
                         <span>대시보드</span>
                         <span class="separator">›</span>
-                        <span id="breadcrumb-current">상품 목록</span>
+                        <span>상품 목록</span>
                     </div>
                 </div>
                 <div class="header-actions">
@@ -53,241 +74,82 @@
                         <span class="btn-icon">🔄</span>
                         새로고침
                     </button>
-                    <button class="btn-primary" id="add-btn">
-                        <span class="btn-icon">+</span>
-                        새로 추가
-                    </button>
                 </div>
             </header>
 
-            <!-- 콘텐츠 영역 -->
-            <div class="content-body">
-                <!-- 상품 목록 뷰 -->
-                <div id="view-products" class="view active">
-                    <!-- 필터 및 검색 -->
-                    <div class="toolbar">
-                        <div class="search-box">
-                            <input type="text" id="search-input" placeholder="상품 검색..." class="search-input">
-                            <span class="search-icon">🔍</span>
-                        </div>
-
-                        <div class="filters">
-                            <select id="platform-filter" class="filter-select">
-                                <option value="">모든 플랫폼</option>
-                                <option value="naver">네이버</option>
-                                <option value="coupang">쿠팡</option>
-                                <option value="cafe24">카페24</option>
-                                <option value="godo">고도몰</option>
-                            </select>
-
-                            <select id="sort-select" class="filter-select">
-                                <option value="collectedAt-desc">최근 수집순</option>
-                                <option value="collectedAt-asc">오래된 순</option>
-                                <option value="name-asc">이름순</option>
-                                <option value="price-asc">가격 낮은순</option>
-                                <option value="price-desc">가격 높은순</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- 상품 테이블 -->
-                    <div class="table-container">
-                        <table class="products-table">
-                            <thead>
-                                <tr>
-                                    <th width="50"><input type="checkbox" id="select-all"></th>
-                                    <th width="80">이미지</th>
-                                    <th>상품명</th>
-                                    <th width="100">플랫폼</th>
-                                    <th width="120">가격</th>
-                                    <th width="140">수집일시</th>
-                                    <th width="100">액션</th>
-                                </tr>
-                            </thead>
-                            <tbody id="products-table-body">
-                                <tr class="empty-row">
-                                    <td colspan="7">
-                                        <div class="empty-state">
-                                            <div class="empty-icon">📦</div>
-                                            <div class="empty-text">수집된 상품이 없습니다</div>
-                                            <div class="empty-hint">확장프로그램을 사용하여 상품을 수집해보세요</div>
-                                        </div>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <!-- 페이지네이션 -->
-                    <div class="pagination" id="pagination">
-                        <!-- 동적 생성 -->
-                    </div>
+            <!-- 필터 및 검색 -->
+            <div class="toolbar">
+                <div class="search-box">
+                    <input type="text" id="search-input" placeholder="상품 검색..." class="search-input">
+                    <span class="search-icon">🔍</span>
                 </div>
-
-                <!-- 통계 뷰 -->
-                <div id="view-stats" class="view">
-                    <div class="stats-dashboard">
-                        <div class="stat-card">
-                            <div class="stat-card-header">
-                                <h3>전체 상품</h3>
-                                <span class="stat-icon">📦</span>
-                            </div>
-                            <div class="stat-value" id="stat-total-products">0</div>
-                            <div class="stat-label">수집된 상품</div>
-                        </div>
-
-                        <div class="stat-card">
-                            <div class="stat-card-header">
-                                <h3>오늘 수집</h3>
-                                <span class="stat-icon">📅</span>
-                            </div>
-                            <div class="stat-value" id="stat-today-products">0</div>
-                            <div class="stat-label">오늘 수집한 상품</div>
-                        </div>
-
-                        <div class="stat-card">
-                            <div class="stat-card-header">
-                                <h3>플랫폼별</h3>
-                                <span class="stat-icon">🏪</span>
-                            </div>
-                            <div class="chart-container" id="platform-chart">
-                                <!-- 차트 -->
-                            </div>
-                        </div>
-
-                        <div class="stat-card">
-                            <div class="stat-card-header">
-                                <h3>평균 가격</h3>
-                                <span class="stat-icon">💰</span>
-                            </div>
-                            <div class="stat-value" id="stat-avg-price">0원</div>
-                            <div class="stat-label">전체 상품 평균</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 프로필 뷰 -->
-                <div id="view-profiles" class="view">
-                    <div class="profiles-grid" id="profiles-grid">
-                        <div class="profile-card add-new">
-                            <div class="add-icon">+</div>
-                            <div class="add-text">새 프로필 추가</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 스케줄 뷰 -->
-                <div id="view-schedules" class="view">
-                    <div class="schedules-list" id="schedules-list">
-                        <div class="empty-state">
-                            <div class="empty-icon">⏰</div>
-                            <div class="empty-text">예약된 스케줄이 없습니다</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 내보내기 뷰 -->
-                <div id="view-export" class="view">
-                    <div class="export-options">
-                        <div class="export-card" data-format="csv">
-                            <div class="export-icon">📄</div>
-                            <h3>CSV 파일</h3>
-                            <p>Excel에서 열 수 있는 CSV 형식으로 내보내기</p>
-                            <button class="btn-primary">내보내기</button>
-                        </div>
-
-                        <div class="export-card" data-format="json">
-                            <div class="export-icon">📋</div>
-                            <h3>JSON 파일</h3>
-                            <p>개발자용 JSON 형식으로 내보내기</p>
-                            <button class="btn-primary">내보내기</button>
-                        </div>
-
-                        <div class="export-card" data-format="sheets">
-                            <div class="export-icon">📊</div>
-                            <h3>Google Sheets</h3>
-                            <p>Google Sheets에 직접 내보내기 (개발 예정)</p>
-                            <button class="btn-secondary" disabled>준비 중</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 설정 뷰 -->
-                <div id="view-settings" class="view">
-                    <div class="settings-container">
-                        <!-- 스크래핑 대상 사이트 -->
-                        <section class="settings-section">
-                            <h2 class="section-title">스크래핑 대상 사이트</h2>
-                            <p class="section-description">상품 정보를 수집할 플랫폼을 선택하세요.</p>
-
-                            <div class="platform-grid" id="platform-grid">
-                                <!-- 플랫폼 목록이 여기에 동적으로 추가됩니다 -->
-                            </div>
-                        </section>
-
-                        <!-- 내보내기 설정 -->
-                        <section class="settings-section">
-                            <h2 class="section-title">내보내기 설정</h2>
-                            <p class="section-description">상품 정보 저장 방식을 선택하세요.</p>
-
-                            <div class="radio-group">
-                                <label class="radio-label">
-                                    <input type="radio" name="export-mode" value="local" checked>
-                                    <span class="radio-text">
-                                        <strong>로컬 저장</strong>
-                                        <small>브라우저에 저장하고 수동으로 내보내기</small>
-                                    </span>
-                                </label>
-
-                                <label class="radio-label">
-                                    <input type="radio" name="export-mode" value="googleSheets">
-                                    <span class="radio-text">
-                                        <strong>구글 시트 자동 저장</strong>
-                                        <small>수집 즉시 구글 시트에 자동 저장</small>
-                                    </span>
-                                </label>
-                            </div>
-
-                            <!-- 구글 시트 설정 -->
-                            <div id="google-sheets-settings" class="subsection" style="display: none;">
-                                <h3 class="subsection-title">구글 시트 연동</h3>
-
-                                <div class="auth-status" id="auth-status">
-                                    <span class="status-icon">🔒</span>
-                                    <span class="status-text">연동되지 않음</span>
-                                </div>
-
-                                <button id="auth-google-btn" class="btn-primary">구글 계정 연동</button>
-
-                                <div id="sheet-config" style="display: none;">
-                                    <div class="form-group">
-                                        <label class="form-label">스프레드시트 ID</label>
-                                        <input type="text" id="spreadsheet-id" placeholder="1ABC123..."
-                                            class="input-field">
-                                        <small class="form-hint">URL에서 /d/ 다음의 ID 복사</small>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label class="form-label">시트 이름</label>
-                                        <input type="text" id="sheet-name" value="Products" class="input-field">
-                                    </div>
-                                </div>
-                            </div>
-                        </section>
-
-                        <!-- 저장 버튼 -->
-                        <div class="settings-actions">
-                            <button id="save-settings-btn" class="btn-primary btn-large">설정 저장</button>
-                            <button id="cancel-settings-btn" class="btn-secondary btn-large">취소</button>
-                        </div>
-                    </div>
+                <div class="filters">
+                    <select id="platform-filter" class="filter-select">
+                        <option value="">모든 플랫폼</option>
+                        <option value="naver">네이버</option>
+                        <option value="coupang">쿠팡</option>
+                        <option value="cafe24">카페24</option>
+                        <option value="godo">고도몰</option>
+                    </select>
+                    <select id="sort-select" class="filter-select">
+                        <option value="collectedAt-desc">최근 수집순</option>
+                        <option value="collectedAt-asc">오래된 순</option>
+                        <option value="name-asc">이름순</option>
+                        <option value="price-asc">가격 낮은순</option>
+                        <option value="price-desc">가격 높은순</option>
+                    </select>
                 </div>
             </div>
+
+            <!-- 상품 테이블 -->
+            <div class="table-container">
+                <table class="products-table">
+                    <thead>
+                        <tr>
+                            <th width="50"><input type="checkbox" id="select-all"></th>
+                            <th width="80">이미지</th>
+                            <th>상품명</th>
+                            <th width="100">플랫폼</th>
+                            <th width="120">가격</th>
+                            <th width="140">수집일시</th>
+                            <th width="100">액션</th>
+                        </tr>
+                    </thead>
+                    <tbody id="products-table-body">
+                        <tr class="empty-row">
+                            <td colspan="7">
+                                <div class="empty-state">
+                                    <div class="empty-icon">📦</div>
+                                    <div class="empty-text">수집된 상품이 없습니다</div>
+                                    <div class="empty-hint">확장프로그램을 사용하여 상품을 수집해보세요</div>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 페이지네이션 -->
+            <div class="pagination" id="pagination"></div>
         </main>
     </div>
 
+    <script>
+        // 사이드바 토글
+        document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar) {
+                sidebar.classList.toggle('collapsed');
+                localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+            }
+        });
+        // 저장된 상태 복원
+        const collapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        if (collapsed) {
+            document.querySelector('.sidebar')?.classList.add('collapsed');
+        }
+    </script>
     <script src="dashboard.js"></script>
-    <script src="settings.js"></script>
 </body>
 
 </html>

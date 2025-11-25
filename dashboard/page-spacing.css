@@ -1,0 +1,25 @@
+/* Phase 7 페이지 간격 조정 */
+.main-content {
+    padding-left: 40px !important;
+    padding-right: 40px !important;
+}
+
+.page-header {
+    margin: 24px 0 !important;
+    padding: 32px !important;
+    background: white !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+}
+
+.page-header h1 {
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    margin-bottom: 8px !important;
+}
+
+.page-header p {
+    color: #6b7280 !important;
+    font-size: 14px !important;
+    margin: 0 !important;
+}

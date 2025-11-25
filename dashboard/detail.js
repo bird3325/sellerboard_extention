@@ -1,8 +1,26 @@
-alert('잘못된 접근입니다.');
-window.location.href = 'dashboard.html';
+/**
+ * 상품 상세 페이지 로직
+ */
+
+document.addEventListener('DOMContentLoaded', () => {
+    // 이미지 에러 처리 (CSP 준수)
+    document.addEventListener('error', (e) => {
+        if (e.target.tagName === 'IMG') {
+            e.target.style.display = 'none';
+        }
+    }, true);
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const productId = parseInt(urlParams.get('id'));
+
+    if (productId) {
+        loadProductDetail(productId);
+    } else {
+        alert('잘못된 접근입니다.');
+        window.location.href = 'dashboard.html';
     }
 
-setupEventListeners();
+    setupEventListeners();
 });
 
 let currentProduct = null;

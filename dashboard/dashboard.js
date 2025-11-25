@@ -11,7 +11,7 @@ const itemsPerPage = 20;
 document.addEventListener('DOMContentLoaded', () => {
     initSidebarToggle();
     loadProducts();
-    setupNavigation();
+    // setupNavigation(); // Removed - Phase 7 uses direct HTML links
     setupEventListeners();
 });
 
@@ -81,8 +81,11 @@ function switchView(view) {
         settings: '설정'
     };
 
-    document.getElementById('page-title').textContent = titles[view] || '셀러보드';
-    document.getElementById('breadcrumb-current').textContent = titles[view] || view;
+    const pageTitle = document.getElementById('page-title');
+    if (pageTitle) pageTitle.textContent = titles[view] || '셀러보드';
+
+    const breadcrumb = document.getElementById('breadcrumb-current');
+    if (breadcrumb) breadcrumb.textContent = titles[view] || view;
 
     // 뷰별 데이터 로드
     if (view === 'stats') {
@@ -337,6 +340,15 @@ function renderPagination() {
     html += `<button class="page-btn" ${currentPage === totalPages ? 'disabled' : ''} data-page="${currentPage + 1}">›</button>`;
 
     pagination.innerHTML = html;
+}
+
+// 이미지 에러 처리
+function setupImageErrorHandling() {
+    document.addEventListener('error', (e) => {
+        if (e.target.tagName === 'IMG') {
+            e.target.style.display = 'none';
+        }
+    }, true);
 }
 
 /**

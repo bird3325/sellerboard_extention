@@ -1,0 +1,60 @@
+<!-- 표준 사이드바 템플릿 (모든 Phase 7 페이지에 사용) -->
+<aside class="sidebar">
+    <div class="sidebar-header">
+        <div class="logo">
+            <div class="logo-icon">S</div>
+            <span class="logo-text">셀러보드</span>
+            <button class="sidebar-toggle" id="sidebar-toggle" title="메뉴 접기/펼치기"></button>
+        </div>
+    </div>
+    <nav class="sidebar-nav">
+        <a href="dashboard.html" class="nav-item">
+            <span class="nav-icon">📦</span>
+            <span class="nav-label">상품 목록</span>
+        </a>
+        <a href="api-management.html" class="nav-item">
+            <span class="nav-icon">🔑</span>
+            <span class="nav-label">API 관리</span>
+        </a>
+        <a href="monitoring.html" class="nav-item">
+            <span class="nav-icon">📈</span>
+            <span class="nav-label">모니터링</span>
+        </a>
+        <a href="margin-analysis.html" class="nav-item">
+            <span class="nav-icon">💰</span>
+            <span class="nav-label">마진 분석</span>
+        </a>
+        <a href="auto-register.html" class="nav-item">
+            <span class="nav-icon">🤖</span>
+            <span class="nav-label">자동 등록</span>
+        </a>
+        <a href="notifications.html" class="nav-item">
+            <span class="nav-icon">🔔</span>
+            <span class="nav-label">알림 센터</span>
+        </a>
+        <a href="reports.html" class="nav-item">
+            <span class="nav-icon">📋</span>
+            <span class="nav-label">리포트</span>
+        </a>
+        <a href="settings.html" class="nav-item">
+            <span class="nav-icon">⚙️</span>
+            <span class="nav-label">설정</span>
+        </a>
+    </nav>
+</aside>
+
+<!-- 사이드바 토글 스크립트 (모든 페이지에 추가) -->
+<script>
+    document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) {
+            sidebar.classList.toggle('collapsed');
+            localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+        }
+    });
+    // 저장된 상태 복원
+    const collapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+    if (collapsed) {
+        document.querySelector('.sidebar')?.classList.add('collapsed');
+    }
+</script>
