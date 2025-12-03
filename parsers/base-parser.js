@@ -26,6 +26,9 @@ class BaseParser {
         try {
             console.log(`[${this.platform}] Starting product parsing...`);
 
+            // Lazy Loading 콘텐츠 로드를 위한 스크롤
+            await this.scrollToLoadContent();
+
             const product = {
                 name: await this.extractName(),
                 price: await this.extractPrice(),
@@ -50,6 +53,49 @@ class BaseParser {
             console.error(`[${this.platform}] Parsing error:`, error);
             throw error;
         }
+    }
+
+    /**
+     * Lazy Loading 콘텐츠 로드를 위해 스크롤
+     */
+    async scrollToLoadContent() {
+        console.log(`[${this.platform}] Scrolling to load content...`);
+
+        // 1. 전체 페이지 점진적 스크롤
+        const totalHeight = document.body.scrollHeight;
+        const steps = 3;
+        const stepSize = totalHeight / steps;
+
+        for (let i = 0; i <= steps; i++) {
+            const currentScroll = i * stepSize;
+            window.scrollTo({
+                top: currentScroll,
+                behavior: 'instant'
+            });
+            await this.wait(200);
+        }
+
+        // 2. 상세 설명 영역으로 명시적 스크롤 (선택자가 있는 경우)
+        if (this.selectors && this.selectors.description) {
+            const selector = this.selectors.description;
+            const el = document.querySelector(selector);
+            if (el) {
+                console.log(`[${this.platform}] Scrolling to description: ${selector}`);
+                el.scrollIntoView({ behavior: 'instant', block: 'start' });
+                await this.wait(800); // 상세 설명 로딩 대기
+
+                // 상세 설명 내부에서도 조금씩 스크롤
+                if (el.scrollHeight > 1000) {
+                    el.scrollBy({ top: 500, behavior: 'instant' });
+                    await this.wait(300);
+                }
+            }
+        }
+
+        // 3. 다시 상단으로 이동 (필요한 경우)
+        window.scrollTo({ top: 0, behavior: 'instant' });
+
+        console.log(`[${this.platform}] Scroll completed`);
     }
 
     /**
