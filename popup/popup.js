@@ -357,11 +357,16 @@ async function checkDuplicateProduct() {
             `;
             alertEl.style.display = 'flex';
         } else {
-            // 중복 아님
+            // 중복 아님 또는 체크 실패
             alertEl.style.display = 'none';
         }
     } catch (error) {
-        console.error('중복 체크 실패:', error);
+        // 에러 발생 시 조용히 처리 (알림 숨김)
+        console.log('중복 체크 스킵:', error.message);
+        const alertEl = document.getElementById('duplicate-alert');
+        if (alertEl) {
+            alertEl.style.display = 'none';
+        }
     }
 }
 
