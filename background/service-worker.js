@@ -64,7 +64,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return true;
 
         case 'batchCollect':
-            handleBatchCollect(sendResponse);
+            handleBatchCollect(message, sendResponse);
             return true;
     }
 });
@@ -180,15 +180,39 @@ async function handleCheckDuplicate(url, sendResponse) {
 /**
  * 배치 수집 처리
  */
-async function handleBatchCollect(sendResponse) {
+async function handleBatchCollect(message, sendResponse) {
+    const progressWindowId = message.progressWindowId;
+
     try {
-        console.log('[ServiceWorker] 배치 수집 시작');
+        console.log('[ServiceWorker] 배치 수집 시작, Progress Window ID:', progressWindowId);
 
-        // 1. 현재 창의 모든 탭 조회
-        const tabs = await chrome.tabs.query({ currentWindow: true });
+        // Progress 창이 완전히 로드될 때까지 대기
+        console.log('[ServiceWorker] Progress 창 로딩 대기 중...');
+        await delay(1500);
+        console.log('[ServiceWorker] Progress 창 로딩 완료');
 
-        // 2. 상품 페이지 탭만 필터링
-        const productTabs = tabs.filter(tab => isProductPage(tab.url));
+        // 1. 모든 탭 조회 (모든 창)
+        const allTabs = await chrome.tabs.query({});
+
+        // 2. 확장 프로그램 페이지 제외
+        const tabs = allTabs.filter(tab => {
+            if (!tab.url || tab.url.startsWith('chrome-extension://') ||
+                tab.url.startsWith('chrome://') || tab.url.startsWith('about:')) {
+                console.log(`[ServiceWorker] 제외: ${tab.url}`);
+                return false;
+            }
+            console.log(`[ServiceWorker] 포함: ${tab.url}`);
+            return true;
+        });
+
+        console.log(`[ServiceWorker] 일반 웹 페이지 탭: ${tabs.length}개`);
+
+        // 3. 상품 페이지 탭만 필터링
+        const productTabs = tabs.filter(tab => {
+            const isProduct = isProductPage(tab.url);
+            console.log(`[ServiceWorker] ${tab.url} -> ${isProduct ? '✅ 상품' : '❌ 일반'}`);
+            return isProduct;
+        });
 
         console.log(`[ServiceWorker] 상품 페이지 탭 ${productTabs.length}개 발견`);
 
@@ -209,37 +233,55 @@ async function handleBatchCollect(sendResponse) {
             errors: []
         };
 
-        // 4. 순차 수집
+        // 5. 순차 수집
         for (let i = 0; i < productTabs.length; i++) {
             const tab = productTabs[i];
             const current = i + 1;
-            const percentage = Math.floor((current / productTabs.length) * 100);
-
-            // 진행 상황 브로드캣스트
-            chrome.runtime.sendMessage({
-                action: 'batchProgress',
-                data: {
-                    current,
-                    total: productTabs.length,
-                    percentage,
-                    currentTab: tab.title || 'Loading...',
-                    status: '수집 중...'
-                }
-            }).catch(() => { }); // 팝업이 닫혀있을 수 있음
+            // 완료된 탭 수로 percentage 계산 (시작 시 0%)
+            const completed = i;
+            const percentage = Math.floor((completed / productTabs.length) * 100);
 
             try {
+                console.log(`[ServiceWorker] === 탭 ${current}/${productTabs.length} 수집 시작 ===`);
+                console.log(`[ServiceWorker] URL: ${tab.url}`);
+                console.log(`[ServiceWorker] Title: ${tab.title}`);
+
+                // 진행 상황 전송 (시작 시)
+                chrome.runtime.sendMessage({
+                    action: 'batchProgress',
+                    data: {
+                        current: completed,
+                        total: productTabs.length,
+                        percentage,
+                        currentTab: tab.title || tab.url || 'Loading...'
+                    }
+                }).catch(() => { }); // 팝업이 닫혀있을 수 있음
+
                 // 탭 활성화 및 로딩 대기
                 await chrome.tabs.update(tab.id, { active: true });
+                console.log(`[ServiceWorker] 탭 활성화 완료`);
 
                 // 탭이 완전히 로드될 때까지 대기 (최대 10초)
                 await waitForTabLoad(tab.id);
-                await delay(1500); // 추가 안정화 시간
+                console.log(`[ServiceWorker] 탭 로드 완료`);
+
+                await delay(2000); // 페이지 안정화 대기
 
                 // 수집 메시지 전송 (재시도 로직 포함)
-                await sendMessageToTabWithRetry(tab.id, { action: 'trigger_product' });
+                console.log(`[ServiceWorker] 수집 메시지 전송 시작...`);
+                const collectResponse = await sendMessageToTabWithRetry(tab.id, { action: 'trigger_product' });
+                console.log(`[ServiceWorker] 수집 응답:`, collectResponse);
 
-                results.success++;
-                await delay(2000); // 다음 탭 대기
+                if (collectResponse && collectResponse.success) {
+                    console.log(`[ServiceWorker] ✅ 탭 ${current} 수집 성공`);
+                    results.success++;
+                } else {
+                    throw new Error(collectResponse?.error || '수집 실패');
+                }
+
+                // 다음 탭으로 이동하기 전 대기 (저장 완료 보장)
+                console.log(`[ServiceWorker] 다음 탭 대기 중...`);
+                await delay(3000);
 
             } catch (error) {
                 console.error(`[ServiceWorker] 탭 "${tab.title}" 수집 실패:`, error);
@@ -251,7 +293,14 @@ async function handleBatchCollect(sendResponse) {
             }
         }
 
-        console.log('[ServiceWorker] 배치 수집 완료:', results);
+        console.log('[ServiceWorker]배치 수집 완료:', results);
+
+        // 완료 메시지 전송
+        chrome.runtime.sendMessage({
+            action: 'batchComplete',
+            results: results
+        }).catch(() => { });
+
         sendResponse({ success: true, results });
 
     } catch (error) {
@@ -325,11 +374,26 @@ async function sendMessageToTabWithRetry(tabId, message, retries = 3) {
             if (i === 0 && error.message.includes('Could not establish connection')) {
                 console.log(`[ServiceWorker] 탭 ${tabId}에 스크립트 주입 시도...`);
                 try {
+                    // manifest.json의 content_scripts와 동일한 순서로 모든 파일 주입
                     await chrome.scripting.executeScript({
                         target: { tabId: tabId },
-                        files: ['content/content-script.js']
+                        files: [
+                            'lib/platform-detector.js',
+                            'parsers/base-parser.js',
+                            'parsers/chinese-platforms/aliexpress-parser.js',
+                            'parsers/chinese-platforms/1688-parser.js',
+                            'parsers/chinese-platforms/taobao-parser.js',
+                            'parsers/korean-platforms/naver-parser.js',
+                            'parsers/korean-platforms/coupang-parser.js',
+                            'parsers/korean-platforms/gmarket-parser.js',
+                            'parsers/korean-platforms/auction-parser.js',
+                            'parsers/korean-platforms/11st-parser.js',
+                            'parsers/parser-manager.js',
+                            'content/content-script.js'
+                        ]
                     });
-                    await delay(500); // 스크립트 초기화 대기
+                    console.log(`[ServiceWorker] 모든 스크립트 주입 완료`);
+                    await delay(1000); // 스크립트 초기화 대기 (늘림)
                     continue; // 재시도
                 } catch (scriptError) {
                     console.error('[ServiceWorker] 스크립트 주입 실패:', scriptError);

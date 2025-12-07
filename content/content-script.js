@@ -30,9 +30,31 @@ function setupMessageListeners() {
         console.log('Content Script 메시지 수신:', message.action);
 
         switch (message.action) {
+            case 'ping':
+                // 연결 확인용
+                sendResponse({ success: true });
+                break;
+
+            case 'getPageUrl':
+                // 현재 페이지 URL 반환
+                sendResponse({ url: window.location.href });
+                break;
+
             case 'collectProduct':
+            case 'trigger_product':
+                // 상품 수집 (기존 및 새 액션명 모두 지원)
                 handleCollectProduct(sendResponse);
                 return true;
+
+            case 'trigger_keyword':
+                // 키워드 검색 페이지로 이동
+                handleKeywordSearch(message.keyword, sendResponse);
+                return true;
+
+            case 'trigger_store':
+                // 몰털이 (준비 중)
+                sendResponse({ success: false, error: '몰털이 기능은 준비 중입니다.' });
+                break;
 
             case 'getProductLinks':
                 handleGetProductLinks(sendResponse);
@@ -77,13 +99,50 @@ function handleCollectProduct(sendResponse) {
                 return;
             }
 
-            sendResponse({ success: true, data: productData });
+            // Service Worker로 데이터 전송하여 저장
+            const saveResponse = await chrome.runtime.sendMessage({
+                action: 'saveProduct',
+                data: productData
+            });
+
+            if (saveResponse && saveResponse.success) {
+                sendResponse({ success: true, message: '상품이 성공적으로 저장되었습니다.' });
+            } else {
+                sendResponse({ success: false, error: saveResponse?.error || '저장 실패' });
+            }
         } catch (error) {
             console.error('상품 수집 오류:', error);
             sendResponse({ success: false, error: error.message });
         }
     })();
     return true; // 비동기 응답을 위해 true 반환
+}
+
+/**
+ * 키워드 검색 처리
+ */
+function handleKeywordSearch(keyword, sendResponse) {
+    if (!keyword) {
+        sendResponse({ success: false, error: '키워드가 없습니다.' });
+        return;
+    }
+
+    const host = window.location.hostname;
+    let searchUrl = '';
+
+    if (host.includes('aliexpress')) {
+        searchUrl = `https://www.aliexpress.com/wholesale?SearchText=${encodeURIComponent(keyword)}`;
+    } else if (host.includes('taobao')) {
+        searchUrl = `https://s.taobao.com/search?q=${encodeURIComponent(keyword)}`;
+    } else if (host.includes('1688')) {
+        searchUrl = `https://s.1688.com/selloffer/offer_search.htm?keywords=${encodeURIComponent(keyword)}`;
+    } else {
+        sendResponse({ success: false, error: '지원하지 않는 사이트입니다.' });
+        return;
+    }
+
+    window.location.href = searchUrl;
+    sendResponse({ success: true, message: '검색 페이지로 이동 중...' });
 }
 
 /**
@@ -120,20 +179,9 @@ function setupKeyboardShortcuts() {
             }
         }
 
-        if (e.altKey && e.key === 'd') {
-            e.preventDefault();
-            if (window.dragSelector) {
-                console.log('단축키: 드래그 모드');
-                window.dragSelector.toggle();
-            }
-        }
 
-        if (e.key === 'Escape') {
-            if (window.dragSelector && window.dragSelector.isActive) {
-                console.log('단축키: 드래그 모드 해제');
-                window.dragSelector.deactivate();
-            }
-        }
+
+
     });
 }
 

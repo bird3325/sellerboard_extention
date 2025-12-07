@@ -5,6 +5,7 @@
   "description": "다중 플랫폼 상품 수집 (Supabase 연동)",
   "permissions": [
     "activeTab",
+    "tabs",
     "storage",
     "scripting",
     "notifications"
@@ -33,13 +34,10 @@
         "parsers/korean-platforms/auction-parser.js",
         "parsers/korean-platforms/11st-parser.js",
         "parsers/parser-manager.js",
-        "content/content-script.js",
-        "content/drag-selector.js",
-        "content/widget.js"
+        "content/content-script.js"
       ],
       "css": [
-        "styles/overlay.css",
-        "styles/widget-modes.css"
+        "styles/overlay.css"
       ],
       "run_at": "document_end"
     }
@@ -61,8 +59,7 @@
     {
       "resources": [
         "assets/*",
-        "styles/widget.css",
-        "styles/widget-modes.css",
+        "progress/*",
         "lib/platform-detector.js",
         "lib/supabase-client.js",
         "parsers/base-parser.js",

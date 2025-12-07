@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>배치 수집 진행 중</title>
+    <link rel="stylesheet" href="progress.css">
+</head>
+
+<body>
+    <div class="progress-overlay">
+        <div class="progress-backdrop"></div>
+
+        <div class="progress-card">
+            <!-- Icon Wrapper with Animation -->
+            <div class="progress-icon-wrapper">
+                <img src="../assets/icons/pixel_progress.gif" alt="Processing" class="progress-gif">
+            </div>
+
+            <!-- Progress Info -->
+            <div class="progress-info">
+                <h2 class="progress-title">배치 수집 진행 중</h2>
+                <p class="progress-message" id="progress-message">상품 정보를 수집하고 있습니다</p>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="progress-bar-container">
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="progress-bar-fill"></div>
+                </div>
+                <div class="progress-stats">
+                    <span class="progress-percentage" id="progress-percentage">0%</span>
+                    <span class="progress-count" id="progress-count">0/0</span>
+                </div>
+            </div>
+
+            <!-- Current Tab Info -->
+            <div class="current-tab-info">
+                <span class="current-tab-label">현재 탭:</span>
+                <span class="current-tab-name" id="current-tab-name">준비 중...</span>
+            </div>
+
+            <!-- Cancel Button -->
+            <button id="cancel-btn" class="cancel-btn">취소</button>
+        </div>
+
+        <!-- Completion Card (Hidden by default) -->
+        <div id="completion-card" class="completion-card" style="display: none;">
+            <div class="completion-icon">✅</div>
+            <h2 class="completion-title">수집 완료!</h2>
+
+            <div class="completion-stats">
+                <div class="stat-item">
+                    <span class="stat-value" id="result-total">0</span>
+                    <span class="stat-label">총 탭</span>
+                </div>
+                <div class="stat-divider"></div>
+                <div class="stat-item success">
+                    <span class="stat-value" id="result-success">0</span>
+                    <span class="stat-label">성공</span>
+                </div>
+                <div class="stat-divider"></div>
+                <div class="stat-item failed">
+                    <span class="stat-value" id="result-failed">0</span>
+                    <span class="stat-label">실패</span>
+                </div>
+            </div>
+
+            <p class="completion-note">3초 후 자동으로 닫힙니다</p>
+        </div>
+    </div>
+
+    <script src="progress.js"></script>
+</body>
+
+</html>

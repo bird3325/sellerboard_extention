@@ -110,13 +110,7 @@
                 <span class="mode-desc">입력 키워드 저장</span>
               </div>
             </button>
-            <button class="mode-btn" id="mode-area">
-              <div class="icon-circle area">🎯</div>
-              <div class="mode-info">
-                <span class="mode-title">영역 드래그</span>
-                <span class="mode-desc">영역 포함 저장</span>
-              </div>
-            </button>
+
             <button class="mode-btn" id="mode-store">
               <div class="icon-circle store">🏪</div>
               <div class="mode-info">
@@ -195,22 +189,17 @@
 
   <!-- Loading Overlay -->
   <div id="loading-overlay" class="loading-overlay" style="display: none;">
-    <div class="loading-content">
-      <div class="stickman-mining">
-        <div class="stickman">
-          <div class="head"></div>
-          <div class="body"></div>
-          <div class="arm-left"></div>
-          <div class="arm-right"></div>
-          <div class="leg-left"></div>
-          <div class="leg-right"></div>
-        </div>
-        <div class="pickaxe"></div>
-        <div class="ground"></div>
+    <div class="loading-backdrop"></div>
+    <div class="loading-card">
+      <div class="loading-icon-wrapper">
+        <img src="../assets/icons/pixel_progress.gif" alt="Loading..." class="progress-gif">
       </div>
-      <div class="loading-text">상품 정보 수집 중...</div>
-      <div class="progress-bar">
-        <div class="progress-fill"></div>
+      <div class="loading-info">
+        <h3 class="loading-title">상품 수집 중</h3>
+        <p class="loading-subtitle">잠시만 기다려주세요...</p>
+      </div>
+      <div class="loading-spinner-track">
+        <div class="loading-spinner-fill"></div>
       </div>
     </div>
   </div>

@@ -9,6 +9,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 주기적 로그인 체크 (30초마다)
     setInterval(checkLoginStatus, 30000);
+
+
 });
 
 /**
@@ -50,7 +52,7 @@ function setupEventListeners() {
             triggerMode('trigger_keyword', { keyword });
         }
     });
-    document.getElementById('mode-area').addEventListener('click', () => triggerMode('trigger_area'));
+
     document.getElementById('mode-store').addEventListener('click', () => triggerMode('trigger_store'));
 
     // 배치 수집 버튼
@@ -69,6 +71,8 @@ function setupEventListeners() {
     });
 }
 
+
+
 /**
  * 로딩 표시
  */
@@ -76,7 +80,7 @@ function showLoading() {
     document.getElementById('loading-overlay').style.display = 'flex';
 
     // 모든 버튼 비활성화
-    const buttons = document.querySelectorAll('.mode-btn, .btn-logout, .btn-primary');
+    const buttons = document.querySelectorAll('.mode-btn, .btn-logout, .btn-primary, .btn-dashboard');
     buttons.forEach(btn => btn.disabled = true);
 }
 
@@ -87,7 +91,7 @@ function hideLoading() {
     document.getElementById('loading-overlay').style.display = 'none';
 
     // 모든 버튼 재활성화
-    const buttons = document.querySelectorAll('.mode-btn, .btn-logout, .btn-primary');
+    const buttons = document.querySelectorAll('.mode-btn, .btn-logout, .btn-primary, .btn-dashboard');
     buttons.forEach(btn => btn.disabled = false);
 }
 
@@ -145,6 +149,14 @@ async function checkLoginStatus() {
         }
     } catch (error) {
         console.error('세션 확인 실패:', error);
+
+        // 확장 프로그램 컨텍스트 무효화 감지
+        if (error.message.includes('Extension context invalidated')) {
+            console.log('확장 프로그램 업데이트 감지, 팝업 새로고침');
+            window.location.reload();
+            return;
+        }
+
         showLogin();
     }
 }
@@ -270,6 +282,8 @@ async function triggerMode(action, data) {
         hideLoading();
 
         if (response && response.success) {
+
+
             const msg = response.message || '작업이 완료되었습니다.';
             alert('성공: ' + msg);
             await loadStats();
@@ -384,30 +398,31 @@ function showMessage(element, message, type) {
  */
 async function startBatchCollection() {
     try {
-        // 프로그레스 모달 표시
-        document.getElementById('batch-progress-modal').style.display = 'flex';
-        document.getElementById('batch-status').textContent = '준비 중...';
-        document.getElementById('batch-current').textContent = '상품 페이지 탭 감지 중...';
-        document.getElementById('batch-progress-fill').style.width = '0%';
-        document.getElementById('batch-percentage').textContent = '0%';
+        // 프로그레스 창 열기
+        const progressWindow = await chrome.windows.create({
+            url: chrome.runtime.getURL('progress/progress.html'),
+            type: 'popup',
+            width: 400,
+            height: 500,
+            focused: true
+        });
+
+        console.log('Progress window opened:', progressWindow.id);
 
         // 배치 수집 요청
-        const response = await chrome.runtime.sendMessage({ action: 'batchCollect' });
-
-        // 프로그레스 모달 닫기
-        document.getElementById('batch-progress-modal').style.display = 'none';
+        const response = await chrome.runtime.sendMessage({
+            action: 'batchCollect',
+            progressWindowId: progressWindow.id
+        });
 
         if (!response.success) {
             alert(response.error || '배치 수집 실패');
-            return;
+            // Close progress window on error
+            chrome.windows.remove(progressWindow.id);
         }
-
-        // 결과 표시
-        showBatchResult(response.results);
 
     } catch (error) {
         console.error('배치 수집 오류:', error);
-        document.getElementById('batch-progress-modal').style.display = 'none';
         alert('배치 수집 중 오류가 발생했습니다.');
     }
 }
