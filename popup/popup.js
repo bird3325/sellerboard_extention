@@ -223,6 +223,7 @@ async function handleLogout() {
 
         document.getElementById('total-count').textContent = '-';
         document.getElementById('today-count').textContent = '-';
+        document.getElementById('remaining-count').textContent = '-';
     } catch (error) {
         console.error('로그아웃 오류:', error);
     }
@@ -254,6 +255,21 @@ async function triggerMode(action, data) {
     if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('about:') || tab.url.startsWith('edge://'))) {
         alert('이 페이지에서는 수집 기능을 사용할 수 없습니다.\n\n상품 페이지(알리익스프레스, 타오바오, 1688 등)로 이동한 후 다시 시도해주세요.');
         return;
+    }
+
+    // 전송 한도 체크
+    try {
+        const sessionResponse = await chrome.runtime.sendMessage({ action: 'getSession' });
+        if (sessionResponse && sessionResponse.session && sessionResponse.session.profile) {
+            const limit = sessionResponse.session.profile.transmission_limit;
+            if (limit <= 0) {
+                alert('전송 한도가 초과되었습니다.\n\n더 이상 수집할 수 없습니다. 관리자에게 문의해주세요.');
+                return;
+            }
+        }
+    } catch (e) {
+        console.error('한도 체크 실패:', e);
+        // 에러 시에는 일단 진행 (서버에서 다시 체크함)
     }
 
     // 로딩 시작
@@ -338,6 +354,7 @@ async function loadStats() {
 
         document.getElementById('total-count').textContent = stats.total.toLocaleString();
         document.getElementById('today-count').textContent = stats.today.toLocaleString();
+        document.getElementById('remaining-count').textContent = stats.remaining.toLocaleString();
     } catch (error) {
         console.error('통계 불러오기 실패:', error);
     }

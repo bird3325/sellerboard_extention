@@ -191,6 +191,27 @@ async function handleBatchCollect(message, sendResponse) {
         await delay(1500);
         console.log('[ServiceWorker] Progress 창 로딩 완료');
 
+        // 0. 전송 한도 체크
+        const client = await initializeSupabase();
+        const session = client.getSession();
+        if (!session || !session.profile || session.profile.transmission_limit <= 0) {
+            const msg = '전송 한도가 초과되었습니다. 수집을 진행할 수 없습니다.';
+
+            // Progress 창에 에러 표시 (메시지 전송)
+            // TODO: Progress 창에서 이 메시지를 처리할 수 있어야 함. 
+            // 현재는 간단히 알림만 띄우고 종료
+
+            chrome.notifications.create({
+                type: 'basic',
+                iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
+                title: '수집 실패',
+                message: msg
+            });
+
+            sendResponse({ success: false, error: msg });
+            return;
+        }
+
         // 1. 모든 탭 조회 (모든 창)
         const allTabs = await chrome.tabs.query({});
 
