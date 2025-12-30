@@ -29,7 +29,20 @@ chrome.runtime.onInstalled.addListener(() => {
     initializeSupabase();
 });
 
-// 시작 시에도 초기화
+// 시작 시(브라우저 시작 시) 체크
+chrome.runtime.onStartup.addListener(async () => {
+    console.log('[ServiceWorker] 브라우저 시작됨');
+    const result = await chrome.storage.local.get(['keepLogin']);
+    if (!result.keepLogin) {
+        const client = await initializeSupabase();
+        if (client) {
+            await client.signOut();
+            console.log('[ServiceWorker] 로그인 상태 유지 미체크로 세션 초기화');
+        }
+    }
+});
+
+// 초기화
 initializeSupabase();
 
 /**
@@ -191,7 +204,7 @@ async function handleBatchCollect(message, sendResponse) {
         await delay(1500);
         console.log('[ServiceWorker] Progress 창 로딩 완료');
 
-        // 0. 전송 한도 체크
+        /* 0. 전송 한도 체크 제거
         const client = await initializeSupabase();
         const session = client.getSession();
         if (!session || !session.profile || session.profile.transmission_limit <= 0) {
@@ -211,6 +224,7 @@ async function handleBatchCollect(message, sendResponse) {
             sendResponse({ success: false, error: msg });
             return;
         }
+        */
 
         // 1. 모든 탭 조회 (모든 창)
         const allTabs = await chrome.tabs.query({});

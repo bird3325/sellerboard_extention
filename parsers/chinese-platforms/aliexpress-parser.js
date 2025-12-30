@@ -27,7 +27,8 @@ class AliexpressParser extends BaseParser {
             images: '.images-view-item img, .magnifier-image',
             stock: '.product-quantity-tip, .quantity--stock',
             description: '.product-description, .detail-desc-decorate-richtext',
-            category: '.breadcrumb, nav[aria-label="breadcrumb"]'
+            category: '.breadcrumb, nav[aria-label="breadcrumb"]',
+            videos: 'video, .video-view video'
         };
     }
 
@@ -731,6 +732,50 @@ class AliexpressParser extends BaseParser {
 
         this.log(`📸 총 이미지 ${images.length}개 수집`);
         return images;
+    }
+
+    /**
+     * 비디오 추출 (AliExpress 특화)
+     */
+    async extractVideos() {
+        const videos = [];
+        const seen = new Set();
+
+        const addVideo = (src) => {
+            if (!src || src.includes('blob:')) return;
+            if (!seen.has(src)) {
+                seen.add(src);
+                videos.push(src);
+            }
+        };
+
+        // 1. video 태그 탐색
+        document.querySelectorAll('video').forEach(v => {
+            addVideo(v.src || v.querySelector('source')?.src);
+        });
+
+        // 2. 스크립트 데이터에서 video 정보 추출
+        try {
+            const scripts = document.querySelectorAll('script');
+            for (const script of scripts) {
+                const content = script.textContent;
+                if (content.includes('videoUid') || content.includes('videoUrl')) {
+                    // 다양한 비디오 URL 패턴 매칭
+                    const matches = content.match(/"videoUrl":\s*"([^"]+)"/g);
+                    if (matches) {
+                        matches.forEach(m => {
+                            const urlMatch = m.match(/"videoUrl":\s*"([^"]+)"/);
+                            if (urlMatch) addVideo(urlMatch[1]);
+                        });
+                    }
+                }
+            }
+        } catch (e) {
+            this.log('  ⚠️ 비디오 스크립트 추출 실패:', e);
+        }
+
+        this.log(`🎥 총 비디오 ${videos.length}개 수집`);
+        return videos;
     }
 
     async extractPlatformSpecificData() {

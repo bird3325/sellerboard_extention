@@ -39,6 +39,7 @@ class BaseParser {
                 shipping: await this.extractShipping(),
                 specs: await this.extractSpecs(),
                 category: await this.extractCategory(),
+                videos: await this.extractVideos(), // 비디오 추출 추가
                 platformMetadata: await this.extractPlatformSpecificData(),
 
                 // 메타 정보
@@ -253,6 +254,35 @@ class BaseParser {
     }
 
     /**
+     * 비디오 URL 추출
+     * @returns {Promise<string[]>}
+     */
+    async extractVideos() {
+        const selector = this.selectors.videos;
+        if (!selector) return [];
+
+        const elements = document.querySelectorAll(selector);
+        const videos = [];
+
+        elements.forEach(el => {
+            const src = el.src || el.dataset.src || el.getAttribute('data-original') || el.querySelector('source')?.src;
+            if (src && !videos.includes(src)) {
+                videos.push(src);
+            }
+        });
+
+        // video 태그 직접 탐색
+        document.querySelectorAll('video').forEach(v => {
+            const src = v.src || v.querySelector('source')?.src;
+            if (src && !videos.includes(src) && src.startsWith('http')) {
+                videos.push(src);
+            }
+        });
+
+        return videos;
+    }
+
+    /**
      * 옵션 추출
      * @returns {Promise<Array>}
      */
@@ -357,8 +387,14 @@ class BaseParser {
      * @returns {number} 숫자로 변환된 가격
      */
     parsePrice(priceText) {
-        // 숫자가 아닌 문자 제거
-        const cleaned = priceText.replace(/[^\d.]/g, '');
+        if (!priceText) return 0;
+
+        // 1. 퍼센트 패턴 (%와 결합된 숫자) 제거 - 할인율 오인 방지
+        let cleaned = priceText.replace(/\d+(?:\.\d+)?%/g, '');
+
+        // 2. 숫자가 아닌 문자 제거 (단, . 은 소수점으로 유지)
+        cleaned = cleaned.replace(/[^\d.]/g, '');
+
         const price = parseFloat(cleaned);
         return isNaN(price) ? 0 : price;
     }
