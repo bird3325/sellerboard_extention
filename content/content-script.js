@@ -43,7 +43,7 @@ function setupMessageListeners() {
             case 'collectProduct':
             case 'trigger_product':
                 // 상품 수집 (기존 및 새 액션명 모두 지원)
-                handleCollectProduct(sendResponse);
+                handleCollectProduct(message.collection_type || 'single', sendResponse);
                 return true;
 
             case 'trigger_keyword':
@@ -81,7 +81,7 @@ function setupMessageListeners() {
 /**
  * 상품 수집 처리
  */
-function handleCollectProduct(sendResponse) {
+function handleCollectProduct(collectionType, sendResponse) {
     (async () => {
         try {
             console.log('상품 데이터 추출 시작 (V2.0)');
@@ -102,7 +102,10 @@ function handleCollectProduct(sendResponse) {
             // Service Worker로 데이터 전송하여 저장
             const saveResponse = await chrome.runtime.sendMessage({
                 action: 'saveProduct',
-                data: productData
+                data: {
+                    ...productData,
+                    collection_type: collectionType
+                }
             });
 
             if (saveResponse && saveResponse.success) {

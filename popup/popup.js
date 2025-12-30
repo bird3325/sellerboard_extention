@@ -45,15 +45,15 @@ function setupEventListeners() {
     });
 
     // 수집 모드 버튼 이벤트
-    document.getElementById('mode-product').addEventListener('click', () => triggerMode('trigger_product'));
+    document.getElementById('mode-product').addEventListener('click', () => triggerMode('trigger_product', { collection_type: 'single' }));
     document.getElementById('mode-keyword').addEventListener('click', async () => {
         const keyword = prompt('수집할 키워드를 입력하세요:');
         if (keyword) {
-            triggerMode('trigger_keyword', { keyword });
+            triggerMode('trigger_keyword', { keyword, collection_type: 'keyword' });
         }
     });
 
-    document.getElementById('mode-store').addEventListener('click', () => triggerMode('trigger_store'));
+    document.getElementById('mode-store').addEventListener('click', () => triggerMode('trigger_store', { collection_type: 'store' }));
 
     // 배치 수집 버튼
     document.getElementById('mode-batch').addEventListener('click', startBatchCollection);
@@ -275,7 +275,7 @@ async function triggerMode(action, data) {
         }
 
         // 실제 작업 수행
-        const message = { action: action };
+        const message = { action: action, collection_type: data.collection_type };
         if (data.keyword) {
             message.keyword = data.keyword;
         }

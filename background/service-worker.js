@@ -304,7 +304,10 @@ async function handleBatchCollect(message, sendResponse) {
 
                 // 수집 메시지 전송 (재시도 로직 포함)
                 console.log(`[ServiceWorker] 수집 메시지 전송 시작...`);
-                const collectResponse = await sendMessageToTabWithRetry(tab.id, { action: 'trigger_product' });
+                const collectResponse = await sendMessageToTabWithRetry(tab.id, {
+                    action: 'trigger_product',
+                    collection_type: 'batch'
+                });
                 console.log(`[ServiceWorker] 수집 응답:`, collectResponse);
 
                 if (collectResponse && collectResponse.success) {
