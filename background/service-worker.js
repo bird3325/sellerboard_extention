@@ -15,7 +15,7 @@ async function initializeSupabase() {
     try {
         supabaseClient = new SupabaseClient();
         await supabaseClient.initialize();
-        console.log('[ServiceWorker] Supabase 초기화 완료');
+
         return supabaseClient;
     } catch (error) {
         console.error('[ServiceWorker] Supabase 초기화 실패:', error);
@@ -25,19 +25,19 @@ async function initializeSupabase() {
 
 // 초기화
 chrome.runtime.onInstalled.addListener(() => {
-    console.log('[ServiceWorker] 설치 완료');
+
     initializeSupabase();
 });
 
 // 시작 시(브라우저 시작 시) 체크
 chrome.runtime.onStartup.addListener(async () => {
-    console.log('[ServiceWorker] 브라우저 시작됨');
+
     const result = await chrome.storage.local.get(['keepLogin']);
     if (!result.keepLogin) {
         const client = await initializeSupabase();
         if (client) {
             await client.signOut();
-            console.log('[ServiceWorker] 로그인 상태 유지 미체크로 세션 초기화');
+
         }
     }
 });
@@ -45,11 +45,14 @@ chrome.runtime.onStartup.addListener(async () => {
 // 초기화
 initializeSupabase();
 
+// 버전 확인용 로그
+console.log('[ServiceWorker] SellerBoard v2.1.1 Loaded (Active Check Enhanced)');
+
 /**
  * 메시지 리스너
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('[ServiceWorker] 메시지 수신:', message.action);
+
 
     switch (message.action) {
         case 'saveProduct':
@@ -79,6 +82,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'batchCollect':
             handleBatchCollect(message, sendResponse);
             return true;
+
+        case 'checkPlatformActive':
+            handleCheckPlatformActive(message.platformId, sendResponse);
+            return true;
     }
 });
 
@@ -87,11 +94,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  */
 async function handleSaveProduct(productData, sendResponse) {
     try {
-        console.log('[ServiceWorker] 상품 저장 시작:', productData.name);
-
         const client = await initializeSupabase();
 
-        // Supabase에 저장
+        // Supabase에 저장 (내부에서 플랫폼 활성 상태 최종 검증 수행)
         await client.saveProduct(productData);
 
         // 알림
@@ -197,12 +202,12 @@ async function handleBatchCollect(message, sendResponse) {
     const progressWindowId = message.progressWindowId;
 
     try {
-        console.log('[ServiceWorker] 배치 수집 시작, Progress Window ID:', progressWindowId);
+
 
         // Progress 창이 완전히 로드될 때까지 대기
-        console.log('[ServiceWorker] Progress 창 로딩 대기 중...');
+
         await delay(1500);
-        console.log('[ServiceWorker] Progress 창 로딩 완료');
+
 
         /* 0. 전송 한도 체크 제거
         const client = await initializeSupabase();
@@ -233,28 +238,39 @@ async function handleBatchCollect(message, sendResponse) {
         const tabs = allTabs.filter(tab => {
             if (!tab.url || tab.url.startsWith('chrome-extension://') ||
                 tab.url.startsWith('chrome://') || tab.url.startsWith('about:')) {
-                console.log(`[ServiceWorker] 제외: ${tab.url}`);
+
                 return false;
             }
             console.log(`[ServiceWorker] 포함: ${tab.url}`);
             return true;
         });
 
-        console.log(`[ServiceWorker] 일반 웹 페이지 탭: ${tabs.length}개`);
 
-        // 3. 상품 페이지 탭만 필터링
-        const productTabs = tabs.filter(tab => {
+
+        // 3. 상품 페이지 탭만 필터링 + 플랫폼 활성 상태 체크
+        const productTabs = [];
+        const client = await initializeSupabase();
+
+        for (const tab of tabs) {
             const isProduct = isProductPage(tab.url);
-            console.log(`[ServiceWorker] ${tab.url} -> ${isProduct ? '✅ 상품' : '❌ 일반'}`);
-            return isProduct;
-        });
+            if (isProduct) {
+                const platformId = detectPlatform(tab.url);
+                const platformStatus = await client.checkPlatformActive(platformId);
 
-        console.log(`[ServiceWorker] 상품 페이지 탭 ${productTabs.length}개 발견`);
+                if (platformStatus.isActive) {
+                    productTabs.push(tab);
+                } else {
+                    console.warn(`[ServiceWorker] 플랫폼 ${platformId} 비활성으로 배치 수집 대상에서 제외: ${tab.url}`);
+                }
+            }
+        }
+
+
 
         if (productTabs.length === 0) {
             sendResponse({
                 success: false,
-                error: '수집 가능한 상품 페이지가 없습니다.'
+                error: '수집 가능한 상품 페이지가 없거나 모든 관련 플랫폼이 비활성 상태입니다.'
             });
             return;
         }
@@ -277,9 +293,9 @@ async function handleBatchCollect(message, sendResponse) {
             const percentage = Math.floor((completed / productTabs.length) * 100);
 
             try {
-                console.log(`[ServiceWorker] === 탭 ${current}/${productTabs.length} 수집 시작 ===`);
-                console.log(`[ServiceWorker] URL: ${tab.url}`);
-                console.log(`[ServiceWorker] Title: ${tab.title}`);
+
+
+
 
                 // 진행 상황 전송 (시작 시)
                 chrome.runtime.sendMessage({
@@ -294,31 +310,31 @@ async function handleBatchCollect(message, sendResponse) {
 
                 // 탭 활성화 및 로딩 대기
                 await chrome.tabs.update(tab.id, { active: true });
-                console.log(`[ServiceWorker] 탭 활성화 완료`);
+
 
                 // 탭이 완전히 로드될 때까지 대기 (최대 10초)
                 await waitForTabLoad(tab.id);
-                console.log(`[ServiceWorker] 탭 로드 완료`);
+
 
                 await delay(2000); // 페이지 안정화 대기
 
                 // 수집 메시지 전송 (재시도 로직 포함)
-                console.log(`[ServiceWorker] 수집 메시지 전송 시작...`);
+
                 const collectResponse = await sendMessageToTabWithRetry(tab.id, {
                     action: 'trigger_product',
                     collection_type: 'batch'
                 });
-                console.log(`[ServiceWorker] 수집 응답:`, collectResponse);
+
 
                 if (collectResponse && collectResponse.success) {
-                    console.log(`[ServiceWorker] ✅ 탭 ${current} 수집 성공`);
+
                     results.success++;
                 } else {
                     throw new Error(collectResponse?.error || '수집 실패');
                 }
 
                 // 다음 탭으로 이동하기 전 대기 (저장 완료 보장)
-                console.log(`[ServiceWorker] 다음 탭 대기 중...`);
+
                 await delay(3000);
 
             } catch (error) {
@@ -331,7 +347,7 @@ async function handleBatchCollect(message, sendResponse) {
             }
         }
 
-        console.log('[ServiceWorker]배치 수집 완료:', results);
+
 
         // 완료 메시지 전송
         chrome.runtime.sendMessage({
@@ -410,7 +426,7 @@ async function sendMessageToTabWithRetry(tabId, message, retries = 3) {
         } catch (error) {
             // 2. 연결 실패 시 스크립트 주입 시도 (첫 번째 실패 시에만)
             if (i === 0 && error.message.includes('Could not establish connection')) {
-                console.log(`[ServiceWorker] 탭 ${tabId}에 스크립트 주입 시도...`);
+
                 try {
                     // manifest.json의 content_scripts와 동일한 순서로 모든 파일 주입
                     await chrome.scripting.executeScript({
@@ -430,7 +446,7 @@ async function sendMessageToTabWithRetry(tabId, message, retries = 3) {
                             'content/content-script.js'
                         ]
                     });
-                    console.log(`[ServiceWorker] 모든 스크립트 주입 완료`);
+
                     await delay(1000); // 스크립트 초기화 대기 (늘림)
                     continue; // 재시도
                 } catch (scriptError) {
@@ -447,4 +463,38 @@ async function sendMessageToTabWithRetry(tabId, message, retries = 3) {
     }
 }
 
-console.log('[ServiceWorker] 로드 완료');
+
+/**
+ * 플랫폼 활성 상태 체크 처리
+ */
+async function handleCheckPlatformActive(platformId, sendResponse) {
+    try {
+        const client = await initializeSupabase();
+        const result = await client.checkPlatformActive(platformId);
+        sendResponse(result);
+    } catch (error) {
+        console.error('[ServiceWorker] 플랫폼 활성 체크 오류:', error);
+        sendResponse({ isActive: false, isListed: false });
+    }
+}
+
+/**
+ * URL 기반 플랫폼 감지 (간이 버전 - PlatformDetector와 동기화)
+ */
+function detectPlatform(url) {
+    if (!url) return 'generic';
+    const lowUrl = url.toLowerCase();
+
+    if (lowUrl.includes('aliexpress.com')) return 'aliexpress';
+    if (lowUrl.includes('taobao.com') || lowUrl.includes('tmall.com')) return 'taobao';
+    if (lowUrl.includes('1688.com')) return '1688';
+
+    // 한국 플랫폼
+    if (lowUrl.includes('smartstore.naver.com') || lowUrl.includes('shopping.naver.com')) return 'naver';
+    if (lowUrl.includes('coupang.com')) return 'coupang';
+    if (lowUrl.includes('gmarket.co.kr')) return 'gmarket';
+    if (lowUrl.includes('auction.co.kr')) return 'auction';
+    if (lowUrl.includes('11st.co.kr')) return '11st';
+
+    return 'generic';
+}

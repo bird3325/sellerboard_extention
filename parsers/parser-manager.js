@@ -28,8 +28,8 @@ class ParserManager {
         this.registerParser('taobao', () => new TaobaoParser());
 
         this.initialized = true;
-        console.log('[ParserManager] Initialized with', this.parsers.size, 'parsers');
-        console.log('[ParserManager] Supported platforms:', Array.from(this.parsers.keys()).join(', '));
+
+
     }
 
     /**
@@ -39,7 +39,7 @@ class ParserManager {
      */
     registerParser(platform, factory) {
         this.parsers.set(platform, factory);
-        console.log(`[ParserManager] Registered parser for ${platform}`);
+
     }
 
     /**
@@ -67,7 +67,7 @@ class ParserManager {
 
         // 플랫폼 감지
         const platform = PlatformDetector.detect();
-        console.log(`[ParserManager] Parsing product from ${platform}`);
+
 
         // 파서 가져오기
         const parser = this.getParser(platform);

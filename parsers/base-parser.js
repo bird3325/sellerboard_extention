@@ -24,7 +24,7 @@ class BaseParser {
      */
     async parseProduct() {
         try {
-            console.log(`[${this.platform}] Starting product parsing...`);
+
 
             // Lazy Loading 콘텐츠 로드를 위한 스크롤
             await this.scrollToLoadContent();
@@ -50,7 +50,7 @@ class BaseParser {
 
             // 옵션이 없는 경우 기본 옵션 생성 (단일 상품)
             if (product.options.length === 0) {
-                console.log(`[${this.platform}] No options found. Creating default option.`);
+
                 product.options.push({
                     name: '기본',
                     values: [{
@@ -73,7 +73,7 @@ class BaseParser {
                 });
             }
 
-            console.log(`[${this.platform}] Parsing completed:`, product);
+
             return product;
         } catch (error) {
             console.error(`[${this.platform}] Parsing error:`, error);
@@ -85,7 +85,7 @@ class BaseParser {
      * Lazy Loading 콘텐츠 로드를 위해 스크롤
      */
     async scrollToLoadContent() {
-        console.log(`[${this.platform}] Scrolling to load content...`);
+
 
         // 1. 전체 페이지 점진적 스크롤
         const totalHeight = document.body.scrollHeight;
@@ -106,7 +106,7 @@ class BaseParser {
             const selector = this.selectors.description;
             const el = document.querySelector(selector);
             if (el) {
-                console.log(`[${this.platform}] Scrolling to description: ${selector}`);
+
                 el.scrollIntoView({ behavior: 'instant', block: 'start' });
                 await this.wait(800); // 상세 설명 로딩 대기
 
@@ -121,7 +121,7 @@ class BaseParser {
         // 3. 다시 상단으로 이동 (필요한 경우)
         window.scrollTo({ top: 0, behavior: 'instant' });
 
-        console.log(`[${this.platform}] Scroll completed`);
+
     }
 
     /**
@@ -157,7 +157,7 @@ class BaseParser {
                 if (element.offsetParent === null) continue;
 
                 const priceText = element.textContent.trim();
-                console.log(`[${this.platform}] Checking price selector "${selector}": "${priceText}"`);
+
                 const price = this.parsePrice(priceText);
 
                 if (price > 0) return price;
@@ -169,24 +169,27 @@ class BaseParser {
         if (metaPrice) {
             const price = this.parsePrice(metaPrice.content);
             if (price > 0) {
-                console.log(`[${this.platform}] Price found in meta tag: ${price}`);
+
                 return price;
             }
         }
 
         // 3. Last Resort: 페이지 전체에서 가격 패턴 검색 (가장 큰 숫자 또는 빈도수 높은 패턴)
         // 주의: 날짜나 전화번호를 가격으로 오인할 수 있으므로 보수적으로 접근
-        console.log(`[${this.platform}] Price selectors failed. Attempting deep body search...`);
+
         try {
             // "원" 또는 "$" 주변의 숫자를 찾음
+            // "원", "$", "¥" 주변의 숫자를 찾음
             const bodyText = document.body.innerText;
-            const priceRegex = /([0-9,]+)(?:원|\s*KW|\s*KRW)|(?:US\s*)?\$([0-9,]+\.?\d*)/g;
+            // 1. KRW (100원~)
+            // 2. USD/CNY/JPY ($10.99, ¥100, 100元)
+            const priceRegex = /([0-9,]+)(?:원|\s*KW|\s*KRW)|(?:US\s*)?\$([0-9,]+\.?\d*)|(?:CNY|JP\s*)?¥([0-9,]+\.?\d*)|([0-9,]+\.?\d*)\s*元/g;
             let match;
             const foundPrices = [];
 
             while ((match = priceRegex.exec(bodyText)) !== null) {
-                const rawNum = match[1] || match[2];
-                const isKRW = !!match[1]; // 첫 번째 그룹이 매칭되면 원화
+                const rawNum = match[1] || match[2] || match[3] || match[4];
+                const isKRW = !!match[1];
                 const val = parseFloat(rawNum.replace(/,/g, ''));
 
                 if (isKRW) {
@@ -195,7 +198,7 @@ class BaseParser {
                         foundPrices.push(val);
                     }
                 } else {
-                    // 달러 등 기타: 0.01 이상
+                    // 달러/위안 등: 0.01 이상
                     if (val >= 0.01 && val < 100000) {
                         foundPrices.push(val);
                     }
@@ -222,7 +225,7 @@ class BaseParser {
                         maxCount = modeMap[el];
                     }
                 }
-                console.log(`[${this.platform}] Deep search found deep price: ${maxEl}`);
+
                 return maxEl;
             }
         } catch (e) {

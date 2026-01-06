@@ -61,9 +61,7 @@ class AliexpressParser extends BaseParser {
         return await super.extractPrice();
     }
 
-    log(...args) {
-        console.log('[AliexpressParser]', ...args);
-    }
+
 
     async extractOptions() {
         const opts = [];
@@ -136,7 +134,7 @@ class AliexpressParser extends BaseParser {
     async extractSkuOptionsAsync() {
         const opts = [];
         const skuProps = document.querySelectorAll('[class*="sku-item--property"], [class*="sku-property"], [class*="sku-property-item"]');
-        this.log(`🔍 SKU 옵션 (동적 가격): ${skuProps.length}개 속성`);
+
 
         if (skuProps.length === 0) return opts;
 
@@ -152,7 +150,7 @@ class AliexpressParser extends BaseParser {
             }
 
             const skuItems = prop.querySelectorAll('[class*="sku-item--image"], [class*="sku-item--text"], [data-sku-col], [data-sku-id]');
-            this.log(`  "${optName}": ${skuItems.length}개`);
+
 
             if (skuItems.length >= 1) {
                 const data = { name: optName, type: 'sku', values: [] };
@@ -184,7 +182,7 @@ class AliexpressParser extends BaseParser {
 
                         try {
                             if (!wasSelected) {
-                                this.log(`    [${i + 1}/${skuItems.length}] "${text}" 클릭...`);
+
                                 item.click();
                                 await new Promise(resolve => setTimeout(resolve, 600));
                             }
@@ -240,7 +238,7 @@ class AliexpressParser extends BaseParser {
                                 }
                             }
                         } catch (e) {
-                            this.log(`      ✗ 오류: ${e.message}`);
+
                         }
 
                         const optValue = { text, value, selected: wasSelected, image: imageUrl };
@@ -255,7 +253,7 @@ class AliexpressParser extends BaseParser {
                 }
                 if (data.values.length >= 1) {
                     opts.push(data);
-                    this.log(`  ✅ "${data.name}" (${data.values.length}개, 가격+재고 수집됨)`);
+
                 }
             }
         }
@@ -276,7 +274,7 @@ class AliexpressParser extends BaseParser {
     }
 
     async extractDescription() {
-        this.log('\n========== 상세 설명 추출 시작 ==========');
+
         const d = { text: '', html: '', images: [] };
 
         try {
@@ -298,7 +296,7 @@ class AliexpressParser extends BaseParser {
             }
 
             let descEl = null;
-            this.log('\n🔍 AliExpress Shadow DOM 확인 (Deep Search)...');
+
             let shadowRoots = [];
             const mainContainer = document.querySelector('.pdp-body') || document.querySelector('#root') || document.body;
             const walker = document.createTreeWalker(mainContainer, NodeFilter.SHOW_ELEMENT);
@@ -421,7 +419,7 @@ class AliexpressParser extends BaseParser {
             }
 
         } catch (e) {
-            this.log('상세 설명 추출 실패:', e);
+
         }
         return d;
     }
@@ -478,7 +476,7 @@ class AliexpressParser extends BaseParser {
         // 사용자가 제공한 스크린샷 기반: id="nav-specification" 또는 data-pl="product-specs"
         const specContainer = document.querySelector('#nav-specification, [data-pl="product-specs"]');
         if (specContainer) {
-            this.log('  ✅ 스펙 컨테이너 발견 (#nav-specification)');
+
 
             // 내부의 리스트 찾기 (클래스명 무관하게 ul 태그 탐색)
             const list = specContainer.querySelector('ul');
@@ -526,7 +524,7 @@ class AliexpressParser extends BaseParser {
                 if (t.length > 50 || t.length < 2) continue;
 
                 if (t.includes('상품 정보') || t.includes('Specifications') || t.includes('Item Specifics') || t.includes('Product Information')) {
-                    this.log(`  🔍 스펙 헤더 후보 발견: "${t}"`);
+
 
                     let candidates = [
                         h.nextElementSibling,
@@ -602,7 +600,7 @@ class AliexpressParser extends BaseParser {
             });
         }
 
-        this.log(`📋 스펙 수집: ${Object.keys(specs).length}개 항목`);
+
         return specs;
     }
 
@@ -679,16 +677,16 @@ class AliexpressParser extends BaseParser {
                     if (match) {
                         try {
                             const urls = JSON.parse(match[1]);
-                            this.log(`  ✅ 스크립트에서 이미지 ${urls.length}개 발견`);
+
                             urls.forEach(url => addImg(url));
                         } catch (e) {
-                            this.log('  ⚠️ JSON 파싱 실패:', e);
+
                         }
                     }
                 }
             }
         } catch (e) {
-            this.log('  ⚠️ 스크립트 이미지 추출 실패:', e);
+
         }
 
         // 2. 갤러리 이미지 추출
@@ -719,7 +717,7 @@ class AliexpressParser extends BaseParser {
 
         // 4. Fallback: 큰 이미지만 추출
         if (images.length === 0) {
-            this.log('  ℹ️ Fallback: 큰 이미지 찾기...');
+
             document.querySelectorAll('img').forEach(img => {
                 if (img.width > 200 && img.height > 200) {
                     if (!img.closest('[class*="related"]') &&
@@ -730,7 +728,7 @@ class AliexpressParser extends BaseParser {
             });
         }
 
-        this.log(`📸 총 이미지 ${images.length}개 수집`);
+
         return images;
     }
 
@@ -771,10 +769,10 @@ class AliexpressParser extends BaseParser {
                 }
             }
         } catch (e) {
-            this.log('  ⚠️ 비디오 스크립트 추출 실패:', e);
+
         }
 
-        this.log(`🎥 총 비디오 ${videos.length}개 수집`);
+
         return videos;
     }
 

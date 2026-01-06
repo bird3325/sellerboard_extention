@@ -2,7 +2,7 @@
  * Content Script - 메시지 중계 및 초기화
  */
 
-console.log('셀러보드 Content Script 로드 시작');
+
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initContentScript);
@@ -11,7 +11,7 @@ if (document.readyState === 'loading') {
 }
 
 function initContentScript() {
-    console.log('셀러보드 Content Script 초기화 완료');
+
     // ParserManager는 manifest.json에서 먼저 로드되므로 global로 접근 가능
     if (typeof parserManager !== 'undefined') {
         parserManager.initialize();
@@ -27,7 +27,7 @@ function initContentScript() {
  */
 function setupMessageListeners() {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        console.log('Content Script 메시지 수신:', message.action);
+
 
         switch (message.action) {
             case 'ping':
@@ -81,20 +81,72 @@ function setupMessageListeners() {
 /**
  * 상품 수집 처리
  */
+/**
+ * 에러 모달 표시
+ */
+function showErrorModal(title, message) {
+    // 기존 모달 제거
+    const existingModal = document.querySelector('.sb-modal-overlay');
+    if (existingModal) existingModal.remove();
+
+    const icons = {
+        error: '🚫',
+        info: 'ℹ️'
+    };
+
+    const modalHtml = `
+        <div class="sb-modal-overlay">
+            <div class="sb-modal-content">
+                <span class="sb-modal-icon">${icons.error}</span>
+                <span class="sb-modal-title">${title}</span>
+                <span class="sb-modal-message">${message}</span>
+                <button class="sb-modal-btn">확인</button>
+            </div>
+        </div>
+    `;
+
+    const div = document.createElement('div');
+    div.innerHTML = modalHtml;
+    const modal = div.firstElementChild;
+
+    // 버튼 이벤트
+    const btn = modal.querySelector('.sb-modal-btn');
+    btn.onclick = () => {
+        modal.style.opacity = '0';
+        setTimeout(() => modal.remove(), 200);
+    };
+
+    // 배경 클릭 시 닫기
+    modal.onclick = (e) => {
+        if (e.target === modal) {
+            btn.click();
+        }
+    };
+
+    if (document.body) {
+        document.body.appendChild(modal);
+    } else {
+        document.addEventListener('DOMContentLoaded', () => {
+            document.body.appendChild(modal);
+        });
+    }
+}
+
+/**
+ * 상품 수집 처리
+ */
 function handleCollectProduct(collectionType, sendResponse) {
     (async () => {
         try {
-            console.log('상품 데이터 추출 시작 (V2.0)');
-
             if (typeof parserManager === 'undefined') {
                 throw new Error('ParserManager not initialized');
             }
 
             const productData = await parserManager.parseCurrentPage();
-            console.log('추출된 데이터:', productData);
 
             if (!productData.name && !productData.price) {
                 console.error('상품 정보 없음');
+                showErrorModal('수집 실패', '상품 정보를 찾을 수 없습니다.');
                 sendResponse({ success: false, error: '상품 정보를 찾을 수 없습니다.' });
                 return;
             }
@@ -111,10 +163,18 @@ function handleCollectProduct(collectionType, sendResponse) {
             if (saveResponse && saveResponse.success) {
                 sendResponse({ success: true, message: '상품이 성공적으로 저장되었습니다.' });
             } else {
-                sendResponse({ success: false, error: saveResponse?.error || '저장 실패' });
+                // 에러 모달 표시 (수집 불가 메시지 등)
+                const errorMsg = saveResponse?.error || '저장 실패';
+
+                // [수집 불가] prefix가 있는 경우만 모달을 띄우거나, 전체 에러에 대해 띄울 수 있음.
+                // 사용자 요청 컨텍스트상 '차단' 케이스가 중요하므로 모든 에러를 모달로 처리
+                showErrorModal('수집 실패', errorMsg);
+
+                sendResponse({ success: false, error: errorMsg });
             }
         } catch (error) {
             console.error('상품 수집 오류:', error);
+            showErrorModal('수집 오류', error.message);
             sendResponse({ success: false, error: error.message });
         }
     })();
@@ -159,7 +219,7 @@ function handleGetProductLinks(sendResponse) {
             }
 
             const links = await parserManager.collectLinks();
-            console.log('추출된 링크 수:', links.length);
+
             sendResponse({ success: true, links: links });
         } catch (error) {
             console.error('링크 추출 오류:', error);
@@ -177,7 +237,7 @@ function setupKeyboardShortcuts() {
         if (e.altKey && e.key === 's') {
             e.preventDefault();
             if (window.sellerboardWidget) {
-                console.log('단축키: 상품 수집');
+
                 window.sellerboardWidget.collectCurrentProduct();
             }
         }
@@ -197,7 +257,7 @@ if (document.body) {
         const currentUrl = location.href;
         if (currentUrl !== lastUrl) {
             lastUrl = currentUrl;
-            console.log('페이지 변경 감지:', currentUrl);
+
 
             if (window.sellerboardWidget) {
                 window.sellerboardWidget.updateStats();

@@ -2,7 +2,7 @@
  * Progress Window - Batch Collection Progress Tracking
  */
 
-console.log('[Progress] Progress window loaded');
+
 
 // DOM Elements
 const progressBarFill = document.getElementById('progress-bar-fill');
@@ -23,18 +23,18 @@ let cancelled = false;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('[Progress] DOM loaded');
+
 
     // Set up cancel button
     cancelBtn.addEventListener('click', () => {
-        console.log('[Progress] Cancel clicked');
+
         cancelled = true;
         window.close();
     });
 
     // Listen for progress updates from service worker
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        console.log('[Progress] Message received:', message);
+
 
         if (message.action === 'batchProgress') {
             updateProgress(message.data);
@@ -50,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function updateProgress(data) {
     const { current, total, percentage, currentTab } = data;
 
-    console.log(`[Progress] Updating: ${current}/${total} (${percentage}%)`);
+
 
     // Update progress bar
     progressBarFill.style.width = `${percentage}%`;
@@ -76,7 +76,7 @@ function updateProgress(data) {
  * Show completion screen
  */
 function showCompletion(results) {
-    console.log('[Progress] Showing completion:', results);
+
 
     // Update completion stats
     resultTotal.textContent = results.total || 0;
@@ -89,7 +89,7 @@ function showCompletion(results) {
 
     // Auto close after 3 seconds
     setTimeout(() => {
-        console.log('[Progress] Auto closing');
+
         window.close();
     }, 3000);
 }
@@ -101,4 +101,4 @@ function isCancelled() {
     return cancelled;
 }
 
-console.log('[Progress] Script initialized');
+

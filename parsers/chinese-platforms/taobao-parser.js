@@ -11,11 +11,11 @@ class TaobaoParser extends BaseParser {
 
     getSelectors() {
         return {
-            name: '.tb-main-title, h1[data-title]',
-            price: '.tb-rmb-num, .price-now',
-            images: '.tb-booth img, .main-pic img',
-            stock: '.tb-amount, .stock-info',
-            description: '.tb-detail, .description',
+            name: '[class*="ItemHeader--title"], .tb-main-title, h1',
+            price: '[class*="Price--priceText"], .tb-rmb-num, .price-now',
+            images: '[class*="Image--mainImage"], .tb-booth img',
+            stock: '[class*="Stock--stock"], .tb-amount',
+            description: '[class*="Desc--desc"], .tb-detail',
             category: '.breadcrumb, .crumb-wrap'
         };
     }
@@ -24,10 +24,21 @@ class TaobaoParser extends BaseParser {
         await this.wait(1000);
 
         const selectors = [
+            // Modern TMall/Taobao (React based)
+            '[class*="ItemHeader--mainTitle"]',
+            '[class*="ItemHeader--title"]',
+            'h1[class*="title"]',
+
+            // Legacy Taobao
             '.tb-main-title',
+            'h3.tb-item-title',
+
+            // Legacy TMall
+            '.tb-detail-hd h1',
+
+            // Generic Fallback
             'h1[data-title]',
-            '.mainpic-product-name h1',
-            'h3.tb-item-title'
+            'h1'
         ];
 
         for (const selector of selectors) {
@@ -41,58 +52,138 @@ class TaobaoParser extends BaseParser {
     }
 
     async extractPrice() {
-        const selectors = [
-            '.tb-rmb-num',
-            '.price-now',
-            '.tb-price',
-            'em.tb-rmb-num'
+        // 1. Modern Price Elements (React)
+        const modernSelectors = [
+            '[class*="Price--priceText"]',
+            '[class*="Price--extraPrice"]',
+            '[class*="Price--current"]'
         ];
 
-        for (const selector of selectors) {
+        for (const selector of modernSelectors) {
             const element = document.querySelector(selector);
             if (element) {
-                const priceText = element.textContent.trim();
-                const price = this.parsePrice(priceText);
+                // "¥ 29.9" 형식 등에서 숫자만 추출
+                const price = this.parsePrice(element.textContent);
                 if (price > 0) return price;
             }
         }
 
-        // 가격 범위 처리
-        const priceRangeEl = document.querySelector('.tb-range-price, .price-range');
-        if (priceRangeEl) {
-            const text = priceRangeEl.textContent;
-            const match = text.match(/(\d+\.?\d*)/);
-            if (match) {
-                return parseFloat(match[1]);
+        // 2. Legacy Selectors
+        const legacySelectors = [
+            '.tb-rmb-num',      // Taobao
+            '.tm-price',        // TMall (Original)
+            '.price-now',       // Common
+            '#J_PromoPriceNum', // Promo
+            '#J_StrPriceModBox .tm-price'
+        ];
+
+        for (const selector of legacySelectors) {
+            const element = document.querySelector(selector);
+            if (element) {
+                const price = this.parsePrice(element.textContent);
+                if (price > 0) return price;
             }
+        }
+
+        // 3. Price Range Handling (e.g. 100-200)
+        const rangeEl = document.querySelector('.tb-range-price, [class*="Price--priceRange"]');
+        if (rangeEl) {
+            const match = rangeEl.textContent.match(/(\d+\.?\d*)/);
+            if (match) return parseFloat(match[1]);
         }
 
         return 0;
     }
 
+    async extractImages() {
+        // 메인 이미지
+        let mainImage = null;
+
+        // Modern - Look for large image container
+        const modernImg = document.querySelector('[class*="Image--mainImage"] img, [class*="MainPic--mainPic"] img');
+        if (modernImg) {
+            mainImage = modernImg.src;
+        }
+
+        // Legacy
+        if (!mainImage) {
+            const legacyImg = document.querySelector('#J_ImgBooth, .tb-booth img, #J_UlThumb img');
+            if (legacyImg) {
+                mainImage = legacyImg.src;
+            }
+        }
+
+        // 고해상도 변환 (ex: _50x50.jpg -> _800x800.jpg or remove suffix)
+        if (mainImage) {
+            // 타오바오 이미지 URL 정리 ( _400x400.jpg 등 제거하여 원본 확보)
+            mainImage = mainImage.replace(/_\d+x\d+.*$/, '').replace(/_sum\.jpg$/, '');
+        }
+
+        // 추가 이미지 (썸네일)
+        const images = mainImage ? [mainImage] : [];
+
+        const thumbSelectors = [
+            '[class*="Image--thumbnails"] img', // Modern
+            '#J_UlThumb li img',                // Legacy Taobao
+            '.tb-thumb li img'                  // Legacy Common
+        ];
+
+        for (const selector of thumbSelectors) {
+            const thumbs = document.querySelectorAll(selector);
+            if (thumbs.length > 0) {
+                thumbs.forEach(img => {
+                    let src = img.src || img.getAttribute('data-src');
+                    if (src) {
+                        // 원본 해상도로 변환
+                        src = src.replace(/_\d+x\d+.*$/, '').replace(/_sum\.jpg$/, '');
+                        if (!images.includes(src)) images.push(src);
+                    }
+                });
+                break; // 한 그룹에서 찾으면 중단
+            }
+        }
+
+        return images.slice(0, 10); // 최대 10장
+    }
+
     async extractOptions() {
         const options = [];
 
-        // SKU 속성 (颜色分类, 尺码 등)
-        const skuGroups = document.querySelectorAll('.tb-sku li.tb-prop, ul[data-property]');
+        // Modern Selectors (SKU Properties)
+        // React 컴포넌트 클래스명이 자주 바뀌므로 data- 속성이나 구조적 특징을 혼합 사용
 
-        skuGroups.forEach(group => {
-            const nameEl = group.querySelector('dt, .tb-property-type');
-            const name = nameEl ? nameEl.textContent.replace(':', '').trim() : '规格';
+        // Strategy 1: Look for Sku wrappers
+        const skuWrappers = document.querySelectorAll('[class*="SkuContent--sku"], .tb-sku .tb-prop, .tm-clear.J_TSaleProp');
 
+        skuWrappers.forEach(wrapper => {
+            // 옵션명 추출
+            const labelEl = wrapper.querySelector('dt, [class*="SkuContent--label"], .tb-property-type');
+            let name = labelEl ? labelEl.textContent.replace(':', '').trim() : 'Option';
+
+            // 옵션값 추출
             const values = [];
-            const valueEls = group.querySelectorAll('dd, li');
+            const items = wrapper.querySelectorAll('dd li, [class*="SkuContent--value"]');
 
-            valueEls.forEach(el => {
-                const value = el.getAttribute('data-value') || el.textContent.trim();
-                const disabled = el.classList.contains('tb-disabled');
+            items.forEach(item => {
+                // 텍스트
+                const textEl = item.querySelector('span') || item;
+                const value = textEl.textContent.trim();
 
-                if (value && !value.includes('请选择')) {
+                // 이미지 (색상 옵션 등)
+                const imgEl = item.querySelector('img');
+                const imageUrl = imgEl ? imgEl.src.replace(/_\d+x\d+.*$/, '') : null;
+
+                // 품절 여부
+                const isOutOfStock = item.classList.contains('tb-out-of-stock') ||
+                    item.classList.contains('disabled') ||
+                    item.getAttribute('aria-disabled') === 'true';
+
+                if (value) {
                     values.push({
                         value,
-                        price: 0,
-                        stock: disabled ? 'out_of_stock' : 'in_stock',
-                        imageUrl: el.querySelector('img')?.src || null
+                        price: 0, // 옵션별 가격은 별도 로직 필요 (복잡도 높음)
+                        stock: isOutOfStock ? 'out_of_stock' : 'in_stock',
+                        imageUrl
                     });
                 }
             });
@@ -110,34 +201,40 @@ class TaobaoParser extends BaseParser {
             fee: 0,
             freeThreshold: 0,
             type: 'standard',
-            isTmall: false,
-            location: ''  // 发货地
+            isTmall: window.location.hostname.includes('tmall'),
+            location: ''
         };
 
-        // TMall 여부 확인
-        shipping.isTmall = window.location.hostname.includes('tmall') ||
-            !!document.querySelector('.tm-logo, .tmall-logo');
+        // 배송비 (Modern & Legacy)
+        // "快递: 0.00" 또는 "免运费" 등을 찾음
+        const shippingTexts = [
+            document.querySelector('[class*="Delivery--delivery"]'), // Modern
+            document.querySelector('.tb-postage'), // Legacy
+            document.querySelector('.post-age-info') // Old
+        ];
 
-        // 배송비 정보
-        const shippingEl = document.querySelector('.tb-postage, .shipping-info');
-        if (shippingEl) {
-            const text = shippingEl.textContent;
-
-            if (text.includes('包邮') || text.includes('免运费')) {
-                shipping.fee = 0;
-                shipping.type = 'free';
-            } else {
-                const feeMatch = text.match(/¥?\s*(\d+\.?\d*)/);
-                if (feeMatch) {
-                    shipping.fee = parseFloat(feeMatch[1]);
+        for (const el of shippingTexts) {
+            if (el) {
+                const text = el.textContent.trim();
+                if (text.includes('免运费') || text.includes('包邮')) {
+                    shipping.fee = 0;
+                    shipping.type = 'free';
+                } else {
+                    const match = text.match(/[\d.]+/);
+                    if (match) {
+                        shipping.fee = parseFloat(match[0]);
+                    }
                 }
-            }
-        }
 
-        // 발송지
-        const locationEl = document.querySelector('.tb-location, .ship-from');
-        if (locationEl) {
-            shipping.location = locationEl.textContent.trim();
+                // 배송지 추출 시도
+                if (text.includes('从')) {
+                    const parts = text.split('从');
+                    if (parts.length > 1) {
+                        shipping.location = parts[1].split('发货')[0].trim();
+                    }
+                }
+                break;
+            }
         }
 
         return shipping;

@@ -152,7 +152,7 @@ async function checkLoginStatus() {
 
         // 확장 프로그램 컨텍스트 무효화 감지
         if (error.message.includes('Extension context invalidated')) {
-            console.log('확장 프로그램 업데이트 감지, 팝업 새로고침');
+
             window.location.reload();
             return;
         }
@@ -265,6 +265,22 @@ async function triggerMode(action, data) {
     showLoading();
 
     try {
+        // 0. 플랫폼 활성 상태 체크 (전체 레이아웃 유지하며 로직 보강)
+        const platformId = PlatformDetector.detect(tab.url);
+
+        const platformStatus = await chrome.runtime.sendMessage({
+            action: 'checkPlatformActive',
+            platformId: platformId
+        });
+
+        if (!platformStatus || !platformStatus.isActive) {
+            hideLoading();
+            const reason = !platformStatus || !platformStatus.isListed ?
+                '등록되지 않은 플랫폼입니다.' : '현재 비활성화된 플랫폼입니다.';
+            alert(`[수집 불가] ${reason}\n관리자에게 문의해주세요.`);
+            return;
+        }
+
         // Content script 로드 확인
         try {
             await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
@@ -282,7 +298,7 @@ async function triggerMode(action, data) {
 
         const response = await chrome.tabs.sendMessage(tab.id, message);
 
-        console.log('수집 모드 응답:', response);
+
 
         hideLoading();
 
@@ -386,7 +402,7 @@ async function checkDuplicateProduct() {
         }
     } catch (error) {
         // 에러 발생 시 조용히 처리 (알림 숨김)
-        console.log('중복 체크 스킵:', error.message);
+
         const alertEl = document.getElementById('duplicate-alert');
         if (alertEl) {
             alertEl.style.display = 'none';
@@ -417,7 +433,7 @@ async function startBatchCollection() {
             focused: true
         });
 
-        console.log('Progress window opened:', progressWindow.id);
+
 
         // 배치 수집 요청
         const response = await chrome.runtime.sendMessage({

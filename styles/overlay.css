@@ -149,3 +149,85 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* 에러/알림 모달 스타일 */
+.sb-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: 9999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  animation: sbFadeIn 0.2s forwards;
+}
+
+.sb-modal-content {
+  background: white;
+  padding: 24px 32px;
+  border-radius: 16px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  max-width: 400px;
+  width: 90%;
+  text-align: center;
+  transform: scale(0.95);
+  animation: sbScaleIn 0.2s forwards;
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+}
+
+.sb-modal-icon {
+  font-size: 32px;
+  margin-bottom: 16px;
+  display: block;
+}
+
+.sb-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.sb-modal-message {
+  font-size: 15px;
+  color: #4b5563;
+  line-height: 1.5;
+  margin-bottom: 24px;
+  display: block;
+  white-space: pre-wrap;
+}
+
+.sb-modal-btn {
+  background: #ef4444;
+  color: white;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  outline: none;
+}
+
+.sb-modal-btn:hover {
+  background: #dc2626;
+}
+
+.sb-modal-btn:active {
+  transform: scale(0.98);
+}
+
+@keyframes sbFadeIn {
+  to { opacity: 1; }
+}
+
+@keyframes sbScaleIn {
+  to { transform: scale(1); }
+}
