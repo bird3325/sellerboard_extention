@@ -7,6 +7,7 @@
 class TaobaoParser extends BaseParser {
     constructor() {
         super('taobao');
+        this.jsonData = null;
     }
 
     getSelectors() {
@@ -20,23 +21,79 @@ class TaobaoParser extends BaseParser {
         };
     }
 
+    async parseProduct() {
+        // 데이터 추출 시도 (가장 먼저 실행)
+        await this.extractJsonData();
+        return super.parseProduct();
+    }
+
+    async extractJsonData() {
+        try {
+            this.jsonData = null;
+            const scripts = document.querySelectorAll('script');
+
+            for (const script of scripts) {
+                const content = script.textContent.trim();
+
+                // 1. New Taobao/Tmall (__INITIAL_DATA__)
+                if (content.includes('__INITIAL_DATA__=')) {
+                    try {
+                        // JSON만 추출
+                        const jsonStr = content.split('__INITIAL_DATA__=')[1].split(';')[0];
+                        if (jsonStr) {
+                            this.jsonData = JSON.parse(jsonStr);
+                            // console.log('[Taobao] Found __INITIAL_DATA__');
+                            return;
+                        }
+                    } catch (e) {
+                        // console.error('[Taobao] JSON Parse Error (__INITIAL_DATA__)', e);
+                    }
+                }
+
+                // 2. Old Taobao (g_config)
+                if (content.includes('g_config =')) {
+                    try {
+                        // g_config 객체 파싱은 복잡하므로 필요한 부분만 정규식으로 추출 시도할 수 있음
+                        // 하지만 보통 g_config에는 제한된 정보만 있음 (idata 등)
+                        // 여기서는 스킵하거나 필요시 구현
+                    } catch (e) { }
+                }
+
+                // 3. TShop Setup
+                if (content.includes('TShop.Setup(')) {
+                    try {
+                        const match = content.match(/TShop\.Setup\((.*?)\);/s);
+                        if (match && match[1]) {
+                            this.jsonData = JSON.parse(match[1]);
+                            // console.log('[Taobao] Found TShop.Setup');
+                            return;
+                        }
+                    } catch (e) { }
+                }
+            }
+        } catch (e) {
+            console.error('[Taobao] JSON Extraction Failed', e);
+        }
+    }
+
     async extractName() {
         await this.wait(1000);
 
+        // 1. JSON Data
+        if (this.jsonData) {
+            // 구조가 다양할 수 있으므로 안전하게 접근
+            const item = this.jsonData.item || this.jsonData.itemDO || (this.jsonData.data && this.jsonData.data.item);
+            if (item && item.title) return item.title;
+        }
+
+        // 2. Selectors (Fallback)
         const selectors = [
-            // Modern TMall/Taobao (React based)
             '[class*="ItemHeader--mainTitle"]',
             '[class*="ItemHeader--title"]',
             'h1[class*="title"]',
-
-            // Legacy Taobao
             '.tb-main-title',
             'h3.tb-item-title',
-
-            // Legacy TMall
             '.tb-detail-hd h1',
-
-            // Generic Fallback
             'h1[data-title]',
             'h1'
         ];
@@ -48,11 +105,27 @@ class TaobaoParser extends BaseParser {
             }
         }
 
-        return '商品名称未找到';
+        return 'Basic Product';
     }
 
     async extractPrice() {
-        // 1. Modern Price Elements (React)
+        // 1. JSON Data
+        if (this.jsonData) {
+            const mock = this.jsonData.mock;
+            if (mock && mock.price && mock.price.price && mock.price.price.priceText) {
+                return this.parsePrice(mock.price.price.priceText);
+            }
+
+            const api = this.jsonData.api;
+            // 복잡한 JSON 경로 탐색 필요...
+
+            // TShop Model
+            if (this.jsonData.detail && this.jsonData.detail.defaultItemPrice) {
+                return this.parsePrice(this.jsonData.detail.defaultItemPrice);
+            }
+        }
+
+        // 2. Selectors
         const modernSelectors = [
             '[class*="Price--priceText"]',
             '[class*="Price--extraPrice"]',
@@ -62,18 +135,16 @@ class TaobaoParser extends BaseParser {
         for (const selector of modernSelectors) {
             const element = document.querySelector(selector);
             if (element) {
-                // "¥ 29.9" 형식 등에서 숫자만 추출
                 const price = this.parsePrice(element.textContent);
                 if (price > 0) return price;
             }
         }
 
-        // 2. Legacy Selectors
         const legacySelectors = [
-            '.tb-rmb-num',      // Taobao
-            '.tm-price',        // TMall (Original)
-            '.price-now',       // Common
-            '#J_PromoPriceNum', // Promo
+            '.tb-rmb-num',
+            '.tm-price',
+            '.price-now',
+            '#J_PromoPriceNum',
             '#J_StrPriceModBox .tm-price'
         ];
 
@@ -85,7 +156,6 @@ class TaobaoParser extends BaseParser {
             }
         }
 
-        // 3. Price Range Handling (e.g. 100-200)
         const rangeEl = document.querySelector('.tb-range-price, [class*="Price--priceRange"]');
         if (rangeEl) {
             const match = rangeEl.textContent.match(/(\d+\.?\d*)/);
@@ -96,36 +166,41 @@ class TaobaoParser extends BaseParser {
     }
 
     async extractImages() {
-        // 메인 이미지
-        let mainImage = null;
+        // 1. JSON Data
+        if (this.jsonData) {
+            const item = this.jsonData.item || (this.jsonData.data && this.jsonData.data.item);
+            if (item && item.images && Array.isArray(item.images)) {
+                return item.images.map(url => {
+                    if (!url.startsWith('http')) return 'https:' + url;
+                    return url;
+                });
+            }
 
-        // Modern - Look for large image container
-        const modernImg = document.querySelector('[class*="Image--mainImage"] img, [class*="MainPic--mainPic"] img');
-        if (modernImg) {
-            mainImage = modernImg.src;
-        }
-
-        // Legacy
-        if (!mainImage) {
-            const legacyImg = document.querySelector('#J_ImgBooth, .tb-booth img, #J_UlThumb img');
-            if (legacyImg) {
-                mainImage = legacyImg.src;
+            // Property Pics
+            if (this.jsonData.propertyPics && this.jsonData.propertyPics.default) {
+                return this.jsonData.propertyPics.default;
             }
         }
 
-        // 고해상도 변환 (ex: _50x50.jpg -> _800x800.jpg or remove suffix)
+        // 2. Selectors
+        let mainImage = null;
+        const modernImg = document.querySelector('[class*="Image--mainImage"] img, [class*="MainPic--mainPic"] img');
+        if (modernImg) mainImage = modernImg.src;
+
+        if (!mainImage) {
+            const legacyImg = document.querySelector('#J_ImgBooth, .tb-booth img, #J_UlThumb img');
+            if (legacyImg) mainImage = legacyImg.src;
+        }
+
         if (mainImage) {
-            // 타오바오 이미지 URL 정리 ( _400x400.jpg 등 제거하여 원본 확보)
             mainImage = mainImage.replace(/_\d+x\d+.*$/, '').replace(/_sum\.jpg$/, '');
         }
 
-        // 추가 이미지 (썸네일)
         const images = mainImage ? [mainImage] : [];
-
         const thumbSelectors = [
-            '[class*="Image--thumbnails"] img', // Modern
-            '#J_UlThumb li img',                // Legacy Taobao
-            '.tb-thumb li img'                  // Legacy Common
+            '[class*="Image--thumbnails"] img',
+            '#J_UlThumb li img',
+            '.tb-thumb li img'
         ];
 
         for (const selector of thumbSelectors) {
@@ -134,46 +209,81 @@ class TaobaoParser extends BaseParser {
                 thumbs.forEach(img => {
                     let src = img.src || img.getAttribute('data-src');
                     if (src) {
-                        // 원본 해상도로 변환
                         src = src.replace(/_\d+x\d+.*$/, '').replace(/_sum\.jpg$/, '');
                         if (!images.includes(src)) images.push(src);
                     }
                 });
-                break; // 한 그룹에서 찾으면 중단
+                break;
             }
         }
 
-        return images.slice(0, 10); // 최대 10장
+        return images.slice(0, 10);
     }
 
     async extractOptions() {
         const options = [];
 
-        // Modern Selectors (SKU Properties)
-        // React 컴포넌트 클래스명이 자주 바뀌므로 data- 속성이나 구조적 특징을 혼합 사용
+        // 1. JSON Data (매우 강력)
+        if (this.jsonData) {
+            try {
+                // skuBase 구조 (Modern)
+                const skuBase = this.jsonData.skuBase || (this.jsonData.data && this.jsonData.data.skuBase);
 
-        // Strategy 1: Look for Sku wrappers
+                if (skuBase && skuBase.props) {
+                    skuBase.props.forEach(prop => {
+                        const name = prop.name;
+                        const values = prop.values.map(v => {
+                            return {
+                                value: v.name,
+                                image: v.image, // 이미지 포함될 수 있음
+                                id: v.vid
+                            };
+                        });
+
+                        // 재고 / 가격 매핑 정보 (skuBase.skus)
+                        // 단, options 배열에는 "목록"만 넣고, 실제 가격 매핑은 조합 단계에서 처리해야 하는데,
+                        // 현재 구조상 options에 가격을 넣을 수 있음 (선택 시 가격)
+                        // 하지만 2-dimension 옵션의 경우 단순 가격 매핑이 어려움 (조합 필요)
+                        // 여기서는 "목록"을 충실히 뽑아내고, 이미지 매핑에 집중
+
+                        if (values.length > 0) {
+                            // SkuMap에서 가격 정보 매핑 시도 (단순 매핑이 어려울 수 있음)
+                            // 여기서는 값 목록만 생성
+                            const optValues = values.map(v => {
+                                const res = {
+                                    value: v.value,
+                                    stock: 'in_stock', // 기본값
+                                    imageUrl: v.image
+                                };
+                                return res;
+                            });
+                            options.push({ name, values: optValues });
+                        }
+                    });
+
+                    if (options.length > 0) return options;
+                }
+            } catch (e) {
+                // JSON 파싱 실패 시 fallback
+            }
+        }
+
+        // 2. DOM Selectors (Fallback)
         const skuWrappers = document.querySelectorAll('[class*="SkuContent--sku"], .tb-sku .tb-prop, .tm-clear.J_TSaleProp');
 
         skuWrappers.forEach(wrapper => {
-            // 옵션명 추출
             const labelEl = wrapper.querySelector('dt, [class*="SkuContent--label"], .tb-property-type');
             let name = labelEl ? labelEl.textContent.replace(':', '').trim() : 'Option';
 
-            // 옵션값 추출
             const values = [];
             const items = wrapper.querySelectorAll('dd li, [class*="SkuContent--value"]');
 
             items.forEach(item => {
-                // 텍스트
                 const textEl = item.querySelector('span') || item;
                 const value = textEl.textContent.trim();
-
-                // 이미지 (색상 옵션 등)
                 const imgEl = item.querySelector('img');
                 const imageUrl = imgEl ? imgEl.src.replace(/_\d+x\d+.*$/, '') : null;
 
-                // 품절 여부
                 const isOutOfStock = item.classList.contains('tb-out-of-stock') ||
                     item.classList.contains('disabled') ||
                     item.getAttribute('aria-disabled') === 'true';
@@ -181,7 +291,7 @@ class TaobaoParser extends BaseParser {
                 if (value) {
                     values.push({
                         value,
-                        price: 0, // 옵션별 가격은 별도 로직 필요 (복잡도 높음)
+                        price: 0,
                         stock: isOutOfStock ? 'out_of_stock' : 'in_stock',
                         imageUrl
                     });
@@ -201,16 +311,15 @@ class TaobaoParser extends BaseParser {
             fee: 0,
             freeThreshold: 0,
             type: 'standard',
-            isTmall: window.location.hostname.includes('tmall'),
-            location: ''
+            isTmall: window.location.hostname.includes('tmall')
         };
 
-        // 배송비 (Modern & Legacy)
-        // "快递: 0.00" 또는 "免运费" 등을 찾음
+        // JSON 처리 생략 (배송비는 복잡한 로직이 많음)
+
         const shippingTexts = [
-            document.querySelector('[class*="Delivery--delivery"]'), // Modern
-            document.querySelector('.tb-postage'), // Legacy
-            document.querySelector('.post-age-info') // Old
+            document.querySelector('[class*="Delivery--delivery"]'),
+            document.querySelector('.tb-postage'),
+            document.querySelector('.post-age-info')
         ];
 
         for (const el of shippingTexts) {
@@ -225,14 +334,6 @@ class TaobaoParser extends BaseParser {
                         shipping.fee = parseFloat(match[0]);
                     }
                 }
-
-                // 배송지 추출 시도
-                if (text.includes('从')) {
-                    const parts = text.split('从');
-                    if (parts.length > 1) {
-                        shipping.location = parts[1].split('发货')[0].trim();
-                    }
-                }
                 break;
             }
         }
@@ -243,7 +344,14 @@ class TaobaoParser extends BaseParser {
     async extractSpecs() {
         const specs = {};
 
-        // 상품 속성
+        // 1. JSON (props)
+        if (this.jsonData) {
+            const props = this.jsonData.props || (this.jsonData.data && this.jsonData.data.props);
+            if (props && props.groupProps && props.groupProps[0] && props.groupProps[0].가) {
+                // 구조가 매우 가변적임. 일단 DOM 방식 권장
+            }
+        }
+
         const specItems = document.querySelectorAll('.tb-property-type, .tb-detail-hd');
         specItems.forEach(item => {
             const label = item.querySelector('.tb-property-type');
@@ -262,14 +370,18 @@ class TaobaoParser extends BaseParser {
     }
 
     async extractStock() {
+        // 1. JSON
+        if (this.jsonData) {
+            const quantity = this.jsonData.quantity || (this.jsonData.data && this.jsonData.data.quantity);
+            if (quantity && quantity.total) {
+                return quantity.total > 0 ? 'in_stock' : 'out_of_stock';
+            }
+        }
+
         const stockEl = document.querySelector('.tb-amount, .tb-stock');
         if (stockEl) {
             const text = stockEl.textContent;
-
-            if (text.includes('无货') || text.includes('已下架')) {
-                return 'out_of_stock';
-            }
-
+            if (text.includes('无货') || text.includes('已下架')) return 'out_of_stock';
             const match = text.match(/(\d+)/);
             if (match) {
                 const stock = parseInt(match[1]);
@@ -277,7 +389,6 @@ class TaobaoParser extends BaseParser {
             }
         }
 
-        // 구매 버튼 상태
         const buyButton = document.querySelector('.tb-btn-buy, #J_LinkBuy');
         if (buyButton && buyButton.classList.contains('tb-disabled')) {
             return 'out_of_stock';
@@ -290,55 +401,35 @@ class TaobaoParser extends BaseParser {
         const metadata = {
             reviewCount: 0,
             rating: 0,
-            monthSales: 0,  // 月销量
+            monthSales: 0,
             seller: '',
             shopScore: 0,
             isTmall: false,
-            wangwangId: '',  // 旺旺号
+            wangwangId: '',
             currency: 'CNY'
         };
 
-        // TMall 여부
-        metadata.isTmall = window.location.hostname.includes('tmall') ||
-            !!document.querySelector('.tm-logo, .tmall-logo');
+        metadata.isTmall = window.location.hostname.includes('tmall') || !!document.querySelector('.tm-logo, .tmall-logo');
 
-        // 리뷰 수
+        if (this.jsonData) {
+            const seller = this.jsonData.seller || (this.jsonData.data && this.jsonData.data.seller);
+            if (seller) {
+                metadata.seller = seller.shopName || seller.sellerNick;
+                metadata.wangwangId = seller.sellerNick;
+                metadata.shopScore = seller.evaluates ? parseFloat(seller.evaluates[0]?.score) : 0;
+            }
+        }
+
+        // Fallback for DOM
+        if (!metadata.seller) {
+            const sellerEl = document.querySelector('.tb-shop-name, .shop-name');
+            if (sellerEl) metadata.seller = sellerEl.textContent.trim();
+        }
+
         const reviewEl = document.querySelector('.tb-rate-counter, .rate-counter');
         if (reviewEl) {
             const reviewText = reviewEl.textContent.replace(/[^\d]/g, '');
             metadata.reviewCount = parseInt(reviewText) || 0;
-        }
-
-        // 평점
-        const ratingEl = document.querySelector('.tb-rate-score, .rate-score');
-        if (ratingEl) {
-            metadata.rating = parseFloat(ratingEl.textContent) || 0;
-        }
-
-        // 월 판매량
-        const salesEl = document.querySelector('.tb-sell-counter, .month-sell-count');
-        if (salesEl) {
-            const salesText = salesEl.textContent.replace(/[^\d]/g, '');
-            metadata.monthSales = parseInt(salesText) || 0;
-        }
-
-        // 판매자 정보
-        const sellerEl = document.querySelector('.tb-shop-name, .shop-name');
-        if (sellerEl) {
-            metadata.seller = sellerEl.textContent.trim();
-        }
-
-        // 상점 평점
-        const shopScoreEl = document.querySelector('.tb-shop-rate, .shop-rate-score');
-        if (shopScoreEl) {
-            metadata.shopScore = parseFloat(shopScoreEl.textContent) || 0;
-        }
-
-        // 왕왕(wangwang) ID - 타오바오 메신저
-        const wangwangEl = document.querySelector('.tb-wangwang, a[href*="wangwang"]');
-        if (wangwangEl) {
-            metadata.wangwangId = wangwangEl.getAttribute('data-nick') ||
-                wangwangEl.textContent.trim();
         }
 
         return metadata;

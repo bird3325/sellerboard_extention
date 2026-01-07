@@ -29,11 +29,50 @@ class BaseParser {
             // Lazy Loading 콘텐츠 로드를 위한 스크롤
             await this.scrollToLoadContent();
 
+            // 옵션 추출 및 조합 처리
+            let options = await this.extractOptions();
+            if (options.length >= 2) {
+                options = this.combineOptionGroups(options);
+            }
+
+            // 기본 가격 추출 (페이지 표시 가격)
+            let pagePrice = await this.extractPrice();
+            let finalPrice = pagePrice;
+
+            // 옵션 중 최저가를 찾아 비교 (더 낮은 가격 선택)
+            if (options && options.length > 0) {
+                let minOptionPrice = -1;
+                let hasValidOptionPrice = false;
+
+                options.forEach(group => {
+                    if (group.values) {
+                        group.values.forEach(val => {
+                            // 문자열일 경우 처리 (ex: "10.00")
+                            const valPrice = typeof val.price === 'string' ? parseFloat(val.price.replace(/[^0-9.]/g, '')) : val.price;
+
+                            if (valPrice !== undefined && valPrice !== null && !isNaN(valPrice) && valPrice > 0) {
+                                if (minOptionPrice === -1 || valPrice < minOptionPrice) {
+                                    minOptionPrice = valPrice;
+                                    hasValidOptionPrice = true;
+                                }
+                            }
+                        });
+                    }
+                });
+
+                if (hasValidOptionPrice) {
+                    // 페이지 가격이 0이거나, 옵션 최저가가 더 낮으면 교체
+                    if (pagePrice <= 0 || minOptionPrice < pagePrice) {
+                        finalPrice = minOptionPrice;
+                    }
+                }
+            }
+
             const product = {
                 name: await this.extractName(),
-                price: await this.extractPrice(),
+                price: finalPrice, // 최종 계산된 최저가 사용
                 images: await this.extractImages(),
-                options: await this.extractOptions(),
+                options: options,
                 description: await this.extractDescription(),
                 stock: await this.extractStock(),
                 shipping: await this.extractShipping(),
@@ -382,6 +421,92 @@ class BaseParser {
      */
     async extractPlatformSpecificData() {
         return {};
+    }
+
+    /**
+     * 옵션 그룹 조합 (Cartesian Product)
+     * @param {Array} groups - 옵션 그룹 배열
+     * @returns {Array} 조합된 단일 옵션 그룹 배열
+     */
+    combineOptionGroups(groups) {
+        if (!groups || groups.length === 0) return [];
+
+        // 재귀함수: depth는 현재 처리 중인 그룹 인덱스
+        const combine = (depth, currentPart) => {
+            // 기저 사례: 모든 그룹을 순회했을 때
+            if (depth === groups.length) {
+                return [currentPart];
+            }
+
+            const group = groups[depth];
+            // 값이 없는 그룹(빈 그룹) 처리: 건너뛰기
+            if (!group.values || group.values.length === 0) {
+                return combine(depth + 1, currentPart);
+            }
+
+            const results = [];
+
+            // 현재 그룹의 모든 옵션 값 순회
+            for (const option of group.values) {
+                // 첫 번째 처리되는 그룹(유효한 값 있는)인지 확인
+                const isFirst = (!currentPart.text && !currentPart.value);
+
+                // 텍스트/값 처리 (text가 없으면 value 사용)
+                const optText = option.text || option.value || '';
+                const optValue = option.value || option.text || '';
+
+                const newText = isFirst ? optText : `${currentPart.text} ${optText}`;
+                const newValue = isFirst ? optValue : `${currentPart.value} ${optValue}`;
+
+                // 가격: 하위 옵션 가격 우선 (없으면 상위 유지)
+                let price = currentPart.price || 0;
+                if (option.price !== undefined && option.price !== null && option.price !== 0) {
+                    price = option.price;
+                }
+
+                // 재고: 하위 옵션 재고 우선
+                let stock = currentPart.stock;
+                if (option.stock !== undefined && option.stock !== null) {
+                    stock = option.stock;
+                }
+
+                // 이미지: 하위 옵션 이미지 우선
+                const optImage = option.image || option.imageUrl;
+                let image = optImage || currentPart.image;
+
+                // 병합된 객체 생성
+                const merged = {
+                    text: newText,
+                    value: newValue,
+                    price: price,
+                    stock: stock,
+                    image: image,
+                    imageUrl: image // 일관성 유지
+                };
+
+                // 재귀 호출
+                results.push(...combine(depth + 1, merged));
+            }
+            return results;
+        };
+
+        const combinedValues = combine(0, {});
+
+        // 그룹 이름 합치기
+        const combinedName = groups.map(g => g.name || '옵션').join(' / ');
+
+        // 전체 재고 합계 계산
+        const totalStock = combinedValues.reduce((sum, item) => {
+            const s = typeof item.stock === 'number' ? item.stock : 0;
+            return sum + s;
+        }, 0);
+
+        return [{
+            name: combinedName,
+            type: 'combination',
+            values: combinedValues,
+            totalStock: totalStock
+        }];
     }
 
     /**
