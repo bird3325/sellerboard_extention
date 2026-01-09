@@ -438,51 +438,72 @@ class TaobaoParser extends BaseParser {
         // Priority: DOM (Real visible price) -> JSON
 
         // 1. DOM
+        // Refined selectors based on modern Taobao/Tmall structures
         const selectors = [
-            '[class*="Price--priceText"]', // Modern
-            '.price-now',
-            '.tm-price',
-            '.tb-rmb-num',
-            '[class*="extraPrice"]' // Discounted
+            '[class*="Price--priceText"]', // Common Modern
+            '[class*="priceText--"]',      // Variation
+            '.price-now',                  // Legacy
+            '.tm-price',                   // Tmall Legacy
+            '.tb-rmb-num',                 // Taobao Legacy
+            '[class*="extraPrice"]',       // Discount/Promo Banner
+            '[class*="Price--extraPrice"]' // Modern Discount
         ];
 
         for (const sel of selectors) {
             const els = document.querySelectorAll(sel);
             for (const el of els) {
+                // Handle "After Coupon" text like "券后 ¥168"
                 const txt = el.textContent.trim();
-                // Filter out empty or non-price strings
+
+                // Explicitly check for currency symbol + number pattern
+                const priceMatch = txt.match(/[¥￥$](\d+(?:\.\d+)?)/);
+                if (priceMatch) {
+                    const p = parseFloat(priceMatch[1]);
+                    if (p > 0) {
+                        this.priceElement = el; // Save for currency check
+                        return p;
+                    }
+                }
+
+                // Fallback normal parse
                 if (txt && /\d/.test(txt)) {
                     const p = this.parsePrice(txt);
-                    if (p > 0) return p;
+                    if (p > 0) {
+                        this.priceElement = el; // Save for currency check
+                        return p;
+                    }
                 }
             }
         }
 
-        // 2. JSON
-        if (this.jsonData) {
-            try {
-                // Try deep path
-                const mock = this.jsonData.mock;
-                if (mock && mock.price && mock.price.price && mock.price.price.priceText) {
-                    return this.parsePrice(mock.price.price.priceText);
-                }
-                const apiStack = this.jsonData.apiStack;
-                if (apiStack && apiStack[0] && apiStack[0].value) {
-                    const api = JSON.parse(apiStack[0].value);
-                    if (api.price && api.price.price && api.price.price.priceText) {
-                        return this.parsePrice(api.price.price.priceText);
+        // Strategy 2: Look for big recursive price elements (often red text)
+        const potentialPriceEls = document.querySelectorAll('span, div, em, strong');
+        for (const el of potentialPriceEls) {
+            const style = window.getComputedStyle(el);
+            // Red-ish color + large font is usually price
+            if (style.color && (style.color.includes('255, 0, 0') || style.color.includes('255, 80, 0') || style.color.includes('#f') || style.color.includes('#F'))) {
+                const fontSize = parseFloat(style.fontSize);
+                if (fontSize >= 18) { // reasonably big
+                    const txt = el.textContent.trim();
+                    // Strict number check
+                    if (/^\d+(?:\.\d+)?$/.test(txt)) {
+                        this.priceElement = el; // Save for currency check
+                        return parseFloat(txt);
                     }
                 }
-            } catch (e) { }
+            }
         }
 
         return 0;
     }
 
     async stepExtractOptions() {
-        // 1. Attempt JSON SKU Mapping (Best Quality)
+        // [User Request] Click-based scraping is required.
+        // We prioritize DOM interaction to capture the dynamic price update upon checking an option.
+
+        // 1. JSON SKU Mapping - Skipped to enforce DOM interaction as requested
+        /*
         if (this.jsonData) {
-            // Path strategies for skuBase
             const skuBase = this.jsonData.skuBase ||
                 (this.jsonData.data && this.jsonData.data.skuBase) ||
                 (this.jsonData.mock && this.jsonData.mock.skuBase);
@@ -492,12 +513,13 @@ class TaobaoParser extends BaseParser {
                 if (combined) return combined;
             }
         }
+        */
 
         // 2. DOM - Scroll and Scrape
-        // The user indicated options are in the "right area" and might need scrolling.
         await this.scrollSkuPanel();
 
-        return this.extractOptionsFromDOM();
+        // Must await the async DOM extraction
+        return await this.extractOptionsFromDOM();
     }
 
     async scrollSkuPanel() {
@@ -616,12 +638,11 @@ class TaobaoParser extends BaseParser {
         return null;
     }
 
-    extractOptionsFromDOM() {
+    async extractOptionsFromDOM() {
         const options = [];
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
         // Strategy 1: User specific structure - Bottom-Up Approach
-        // Instead of looking for wrapper first, we look for values and group them by parent.
-        // This is robust against wrapper class name changes.
         const allValueItems = document.querySelectorAll('[class*="valueItem--"]');
 
         if (allValueItems.length > 0) {
@@ -633,47 +654,70 @@ class TaobaoParser extends BaseParser {
                 rows.get(parent).push(item);
             });
 
-            rows.forEach((items, parentContainer) => {
+            // Use for...of loop for async iteration
+            for (const [parentContainer, items] of rows) {
                 // Try to find Label
-                // 1. Look for Label inside the parent's parent (Grandparent usually holds Label + Content)
-                // structure: <div class="skuItem--..."> <div class="label">...</div> <div class="content">...values...</div> </div>
                 let name = '옵션';
                 let labelFound = false;
 
-                // Check Grandparent
-                const grandParent = parentContainer.parentElement;
-                if (grandParent) {
-                    const labelEl = grandParent.querySelector('[class*="ItemLabel--"] span, [class*="ItemLabel--"]');
-                    if (labelEl) {
-                        name = labelEl.textContent.trim();
-                        labelFound = true;
-                    }
-                }
+                // Strategy 1 Label Improvement
+                name = '옵션';
+                labelFound = false;
 
-                // If not found, check siblings of parentContainer
-                if (!labelFound) {
-                    let prev = parentContainer.previousElementSibling;
-                    while (prev) {
-                        if (prev.className && typeof prev.className === 'string' && prev.className.includes('ItemLabel')) {
-                            name = prev.textContent.trim();
+                // 1. Try generic sibling search (upwards)
+                let prev = parentContainer.previousElementSibling;
+                // Limit lookback
+                let lookback = 3;
+                while (prev && lookback > 0) {
+                    // Check if it looks like a label
+                    const txt = prev.textContent.trim();
+                    if (txt && txt.length < 20 && !txt.includes('¥')) {
+                        // Check class
+                        if (prev.className && typeof prev.className === 'string' && (prev.className.includes('ItemLabel') || prev.className.includes('label'))) {
+                            name = txt;
+                            labelFound = true;
                             break;
                         }
-                        prev = prev.previousElementSibling;
+                        // Check simple tag
+                        if (prev.tagName === 'DT' || prev.tagName === 'LABEL' || prev.tagName === 'H4' || (prev.tagName === 'DIV' && txt.endsWith('：'))) {
+                            name = txt.replace(/[:：]/g, '');
+                            labelFound = true;
+                            break;
+                        }
+                    }
+                    prev = prev.previousElementSibling;
+                    lookback--;
+                }
+
+                // 2. Grandparent search (if parent is just a wrapper for the list)
+                if (!labelFound) {
+                    const grandParent = parentContainer.parentElement;
+                    if (grandParent) {
+                        const labelEl = grandParent.querySelector('[class*="ItemLabel--"] span, [class*="ItemLabel--"], .label, dt');
+                        if (labelEl) {
+                            name = labelEl.textContent.trim();
+                            labelFound = true;
+                        } else {
+                            // First child of grandparent might be label if it's not the container itself
+                            const first = grandParent.firstElementChild;
+                            if (first && first !== parentContainer && first.textContent.length < 20 && !first.querySelector('img')) {
+                                name = first.textContent.trim().replace(/[:：]/g, '');
+                                labelFound = true;
+                            }
+                        }
                     }
                 }
 
                 const values = [];
-                items.forEach(item => {
+                for (const item of items) {
                     const textEl = item.querySelector('[class*="valueItemText--"]');
                     const imgEl = item.querySelector('[class*="valueItemImg--"] img, img[class*="valueItemImg--"]');
 
-                    // Check disabled state via class or data attribute
                     let disabled = item.getAttribute('data-disabled') === 'true' ||
                         item.classList.contains('disabled') ||
                         (item.className && typeof item.className === 'string' && item.className.includes('isDisabled')) ||
                         (item.className && typeof item.className === 'string' && item.className.includes('disabled'));
 
-                    // Fallback to style check (often used in Taobao)
                     if (!disabled && item.style.opacity && item.style.opacity < 1) disabled = true;
 
                     if (textEl) {
@@ -687,34 +731,62 @@ class TaobaoParser extends BaseParser {
                             }
                         }
 
+
+                        // Start Interaction: Click and scrape price
+                        let currentPrice = 0;
+                        if (!disabled) {
+                            try {
+                                // 1. Scroll into view to ensure clickability
+                                item.scrollIntoView({ behavior: 'instant', block: 'center' });
+
+                                // 2. Click
+                                item.click();
+
+                                // 3. Wait slightly longer for React/Vue to update
+                                await sleep(500);
+
+                                // 4. Check if price updated (or just scrape whatever is there)
+                                currentPrice = await this.stepExtractPrice();
+
+                                // Retry click on text element if price seems invalid or 0, just in case
+                                if (currentPrice === 0 && textEl) {
+                                    textEl.click();
+                                    await sleep(500);
+                                    currentPrice = await this.stepExtractPrice();
+                                }
+                            } catch (e) {
+                                console.warn('[Taobao] Click option failed', e);
+                            }
+                        }
+
                         values.push({
                             value: valName,
-                            price: 0,
+                            price: currentPrice,
                             stock: disabled ? 0 : 999,
                             imageUrl: src
                         });
                     }
-                });
+                }
 
                 if (values.length > 0) {
                     options.push({ name, values });
                 }
-            });
+            }
 
             return options;
         }
 
         // Strategy 2: Fallback (Legacy / Standard)
-        const wrappers = document.querySelectorAll('.sku-property, .J_Prop, [class*="SkuContent--sku"], .tb-sku .tb-prop');
-        wrappers.forEach(wrap => {
-            const label = wrap.querySelector('dt, [class*="SkuContent--label"], .tb-property-type');
-            const name = label ? label.textContent.replace(':', '').trim() : '옵션';
+        const wrappers = document.querySelectorAll('.sku-property, .J_Prop, [class*="SkuContent--sku"], .tb-sku .tb-prop, dl, div[class*="prop-"]');
+        for (const wrap of wrappers) {
+            const label = wrap.querySelector('dt, [class*="SkuContent--label"], .tb-property-type, span[class*="label"], h4');
+            const name = label ? label.textContent.replace(/[:：]/g, '').trim() : '옵션';
 
             const values = [];
             const items = wrap.querySelectorAll('li, dd li, [class*="SkuContent--value"]');
 
-            items.forEach(item => {
-                if (item.classList.contains('tb-property-type')) return; // skip label
+            for (const item of items) {
+                if (item.classList.contains('tb-property-type')) continue;
 
                 const span = item.querySelector('span');
                 const valName = span ? span.textContent.trim() : item.textContent.trim();
@@ -726,19 +798,152 @@ class TaobaoParser extends BaseParser {
                 const disabled = item.classList.contains('disabled') || item.classList.contains('tb-out-of-stock');
 
                 if (valName) {
+                    let currentPrice = 0;
+                    if (!disabled) {
+                        try {
+                            // Find clickable element (often 'a' tag inside 'li' for legacy)
+                            const clickable = item.querySelector('a') || item;
+                            if (clickable) {
+                                if (clickable.scrollIntoView) clickable.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                clickable.click();
+                                await sleep(500);
+                                currentPrice = await this.stepExtractPrice();
+                            }
+                        } catch (e) { }
+                    }
+
                     values.push({
                         value: valName,
-                        price: 0, // Unknown
+                        price: currentPrice,
                         stock: disabled ? 0 : 999,
                         imageUrl: src
                     });
                 }
-            });
+            }
 
             if (values.length > 0) {
                 options.push({ name, values });
             }
-        });
+        }
+
+        /*
+        // Strategy 3: Generic / Catch-all (for very new or obscure layouts)
+        // Look for any grid-like structure that resembles options
+        if (options.length === 0) {
+            // Find all containers that look like property lines
+            // Criteria: Has a label-like child and a value-list-like child
+            const allDivs = document.querySelectorAll('div, dl, ul');
+
+            for (const wrap of allDivs) {
+                // Must not be too big
+                if (wrap.childElementCount > 20) continue;
+
+                // Check direct children for list of items
+                const validChildren = Array.from(wrap.children).filter(c => {
+                    const s = window.getComputedStyle(c);
+                    return s.display !== 'none' && s.visibility !== 'hidden';
+                });
+
+                if (validChildren.length < 2) continue;
+
+                // Identify if this looks like an option group
+                // Often: Label (static) + List of clickable items (float or flex)
+
+                // 1. Try to find label
+                let name = null;
+                const firstChild = validChildren[0];
+                if (firstChild.tagName.match(/DT|LABEL|SPAN|H\d/) && firstChild.textContent.length < 10) {
+                    name = firstChild.textContent.trim().replace(/[:：]/g, '');
+                }
+
+                if (!name) {
+                    // Look strictly above?
+                    const prev = wrap.previousElementSibling;
+                    if (prev && prev.textContent.length < 20 && prev.tagName.match(/DIV|P|DT/)) {
+                        name = prev.textContent.trim().replace(/[:：]/g, '');
+                    }
+                }
+
+                if (!name) continue; // Must have a name to be an option group
+
+                const values = [];
+                // Process only likely option items (exclude the label itself)
+                const candidateItems = validChildren.filter(c => c !== firstChild);
+
+                // If candidate items are wrapped in a single container, unwrap them
+                let finalItems = candidateItems;
+                if (candidateItems.length === 1 && candidateItems[0].childElementCount > 1) {
+                    finalItems = Array.from(candidateItems[0].children);
+                }
+
+                for (const item of finalItems) {
+                    const txt = item.textContent.trim();
+                    if (!txt && !item.querySelector('img')) continue;
+
+                    // Must look interactive (border, pointer, or specific styling)
+                    const style = window.getComputedStyle(item);
+                    // Simple heuristic: Borders often mean buttons
+                    const hasBorder = style.borderWidth !== '0px';
+                    const hasCursor = style.cursor === 'pointer';
+                    const hasImage = !!item.querySelector('img');
+
+                    if (!hasBorder && !hasCursor && !hasImage && finalItems.length < 30) {
+                        // Loose check
+                    }
+
+                    let disabled = item.classList.contains('disabled') || item.getAttribute('aria-disabled') === 'true';
+                    if (!disabled && style.opacity < 0.5) disabled = true;
+                    if (!disabled && style.color === 'rgb(204, 204, 204)') disabled = true; // Grayed out
+
+                    // Image
+                    const img = item.querySelector('img');
+                    let src = img ? (img.src || img.getAttribute('data-src')) : null;
+                    if (!src && item.style.backgroundImage) {
+                        const bgMatch = item.style.backgroundImage.match(/url\(['"]?(.*?)['"]?\)/);
+                        if (bgMatch) src = bgMatch[1];
+                    }
+                    if (src) {
+                        src = src.replace(/_\d+x\d+.*$/, '').replace(/_sum\.jpg$/, '');
+                        if (src.startsWith('//')) src = 'https:' + src;
+                    }
+
+                    let currentPrice = 0;
+                    if (!disabled) {
+                        try {
+                            // Find the best clickable target
+                            const targets = [
+                                item.querySelector('a'),
+                                item.querySelector('input'),
+                                item.querySelector('img'), // sometimes image is the click target
+                                item
+                            ];
+                            const clickable = targets.find(t => t); // First non-null
+
+                            if (clickable) {
+                                if (clickable.scrollIntoView) clickable.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                clickable.click();
+                                await sleep(500);
+                                currentPrice = await this.stepExtractPrice();
+                            }
+                        } catch (e) { }
+                    }
+
+                    values.push({
+                        value: txt || name, // Fallback to group name + index if needed, but txt prefers
+                        price: currentPrice,
+                        stock: disabled ? 0 : 999,
+                        imageUrl: src
+                    });
+                }
+
+                if (values.length > 1) { // Needs at least 2 choices to be an option usually
+                    if (!options.find(o => o.name === name)) {
+                        options.push({ name, values });
+                    }
+                }
+            }
+        }
+        */
 
         return options;
     }
@@ -822,6 +1027,53 @@ class TaobaoParser extends BaseParser {
     async stepExtractCategory() {
         const els = document.querySelectorAll('.breadcrumb a, .crumb-wrap a');
         return Array.from(els).map(a => a.textContent.trim()).join(' > ');
+    }
+
+    async extractCurrency() {
+        return 'CNY'; // Force CNY as per user request
+    }
+
+    async _legacy_extractCurrency() {
+        // Strict Currency Check using the actual price element found
+        try {
+            if (this.priceElement) {
+                // 1. Check the element itself
+                let txt = this.priceElement.textContent.trim();
+                if (txt.includes('₩') || txt.includes('KRW')) return 'KRW';
+                if (txt.includes('$') || txt.includes('USD')) return 'USD';
+                if (txt.includes('¥') || txt.includes('元') || txt.includes('CNY')) return 'CNY';
+
+                // 2. Check the Parent
+                const parent = this.priceElement.parentElement;
+                if (parent) {
+                    txt = parent.textContent.trim();
+                    // Parent might contain shipping fee "0원", so be careful.
+                    // Only accept KRW if it's explicitly the symbol ₩ or KRW code.
+                    if (txt.includes('₩') || txt.includes('KRW')) return 'KRW';
+                    if (txt.includes('$') || txt.includes('USD')) return 'USD';
+                    if (txt.includes('¥') || txt.includes('元') || txt.includes('CNY')) return 'CNY';
+                }
+
+                // 3. Check Previous Sibling
+                const prev = this.priceElement.previousElementSibling;
+                if (prev) {
+                    txt = prev.textContent.trim();
+                    if (txt.includes('₩') || txt.includes('KRW')) return 'KRW';
+                    if (txt.includes('$') || txt.includes('USD')) return 'USD';
+                    if (txt.includes('¥') || txt.includes('元') || txt.includes('CNY')) return 'CNY';
+                }
+            } else {
+                // Fallback if priceElement wasn't saved (e.g. stepExtractPrice wasn't called or failed)
+                // Do a safe scan for specific currency classes
+                const currencyEls = document.querySelectorAll('[class*="Price--currency"], [class*="priceCurrency"], .tb-rmb');
+                for (const el of currencyEls) {
+                    const txt = el.textContent.trim();
+                    if (txt.match(/^[¥￥元]$/)) return 'CNY'; // Strict match
+                }
+            }
+        } catch (e) { }
+
+        return 'CNY'; // Default for Taobao
     }
 }
 

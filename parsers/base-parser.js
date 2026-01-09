@@ -78,6 +78,7 @@ class BaseParser {
                 shipping: await this.extractShipping(),
                 specs: await this.extractSpecs(),
                 category: await this.extractCategory(),
+                currency: await this.extractCurrency(), // 화폐 단위 추가
                 videos: await this.extractVideos(), // 비디오 추출 추가
                 platformMetadata: await this.extractPlatformSpecificData(),
 
@@ -413,6 +414,53 @@ class BaseParser {
 
         const element = document.querySelector(selector);
         return element ? element.textContent.trim() : '';
+    }
+
+    /**
+     * 화폐 단위 추출
+     * @returns {Promise<string>} 'KRW', 'USD', 'CNY', 'JPY' etc.
+     */
+    async extractCurrency() {
+        // 1. 메타 데이터 확인 (og:price:currency)
+        const metaCurrency = document.querySelector('meta[property="og:price:currency"], meta[itemprop="priceCurrency"]');
+        if (metaCurrency && metaCurrency.content) {
+            return metaCurrency.content.toUpperCase();
+        }
+
+        // 2. 가격 텍스트 패턴 분석
+        try {
+            const priceSelectors = this.selectors.price;
+            const selectorList = Array.isArray(priceSelectors) ? priceSelectors : [priceSelectors];
+
+            for (const sel of selectorList) {
+                const el = document.querySelector(sel);
+                if (el) {
+                    const txt = el.textContent.trim();
+                    // Symbol Priority
+                    if (txt.includes('₩')) return 'KRW'; // Strict Won Symbol
+                    if (txt.includes('$')) return 'USD';
+                    if (txt.includes('¥') || txt.includes('元')) return 'CNY';
+
+                    // Regex for "Number + 원" pattern (e.g. 1000원, 1,000 원)
+                    if (/[\d,]+\s*원/.test(txt)) return 'KRW';
+
+                    // Code Priority
+                    if (txt.includes('KRW')) return 'KRW';
+                    if (txt.includes('USD')) return 'USD';
+                    if (txt.includes('CNY')) return 'CNY';
+                    if (txt.includes('JPY')) return 'JPY';
+                }
+            }
+
+            /*
+            // 3. Body 텍스트 스캔 (보수적) - False Positive 위험으로 제거
+            const bodyText = document.body.innerText.substring(0, 2000); // 상단만
+            if (bodyText.includes('원') && !bodyText.includes('元')) return 'KRW';
+            if (bodyText.includes('CNY') || bodyText.includes('元')) return 'CNY';
+            */
+        } catch (e) { }
+
+        return 'UNK'; // Unknown
     }
 
     /**

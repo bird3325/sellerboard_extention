@@ -784,21 +784,8 @@ class AliexpressParser extends BaseParser {
             seller: '',
             storeName: '',
             storeRating: 0,
-            currency: 'USD'
+            currency: 'USD' // Default
         };
-
-        // 리뷰 수
-        const reviewEl = document.querySelector('.overview-rating-count, span[data-pl="review-count"]');
-        if (reviewEl) {
-            const reviewText = reviewEl.textContent.replace(/[^\d]/g, '');
-            metadata.reviewCount = parseInt(reviewText) || 0;
-        }
-
-        // 평점
-        const ratingEl = document.querySelector('.overview-rating-average, span[data-pl="rating"]');
-        if (ratingEl) {
-            metadata.rating = parseFloat(ratingEl.textContent) || 0;
-        }
 
         // 주문 수
         const ordersEl = document.querySelector('.product-reviewer-sold, span[data-pl="order-count"]');
@@ -821,6 +808,37 @@ class AliexpressParser extends BaseParser {
         }
 
         return metadata;
+    }
+
+    async extractCurrency() {
+        return 'USD'; // Force USD as per user request
+    }
+
+    async _legacy_extractCurrency() {
+        // 1. Check specific AE selector for currency
+        const currencyEl = document.querySelector('[class*="currency-code"], .currency-symbol');
+        if (currencyEl) {
+            const txt = currencyEl.textContent.trim();
+            if (txt === 'KRW' || txt === '₩') return 'KRW';
+            if (txt === 'USD' || txt === '$') return 'USD';
+        }
+
+        // 2. Check Price Element Context
+        const priceEl = document.querySelector(this.selectors.price[0]); // Use first selector
+        if (priceEl) {
+            const txt = priceEl.textContent;
+            if (txt.includes('₩')) return 'KRW';
+            if (txt.includes('$')) return 'USD';
+        }
+
+        // 3. Script Data (common in AE)
+        try {
+            if (window.runParams && window.runParams.data && window.runParams.data.currencyCode) {
+                return window.runParams.data.currencyCode;
+            }
+        } catch (e) { }
+
+        return 'USD'; // Default for global site
     }
 
     /**
