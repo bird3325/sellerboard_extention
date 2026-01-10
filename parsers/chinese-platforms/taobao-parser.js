@@ -335,29 +335,43 @@ class TaobaoParser extends BaseParser {
                         // Pattern: var b = {"appData": ... };
                         // Robust Extraction: Balanced Brace Counting
                         // Regex is too brittle for nested JSON containing "};". 
-                        // We search for the start of the object and count braces.
 
                         const startMarker = '{"appData":';
                         const startIndex = content.indexOf(startMarker);
 
                         if (startIndex !== -1) {
-                            let braceCount = 0;
-                            let jsonString = '';
+                            // Helper inside scope for robust parsing
+                            const extractJsonQuoteAware = (str, startPos) => {
+                                let braceCount = 0;
+                                let inString = false;
+                                let escaped = false;
+                                let endPos = -1;
 
-                            for (let i = startIndex; i < content.length; i++) {
-                                const char = content[i];
-                                if (char === '{') braceCount++;
-                                else if (char === '}') braceCount--;
+                                for (let i = startPos; i < str.length; i++) {
+                                    const char = str[i];
+                                    if (escaped) { escaped = false; continue; }
+                                    if (char === '\\') { escaped = true; continue; }
+                                    if (char === '"') { inString = !inString; continue; }
 
-                                if (braceCount === 0) {
-                                    jsonString = content.substring(startIndex, i + 1);
-                                    break;
+                                    if (!inString) {
+                                        if (char === '{') braceCount++;
+                                        else if (char === '}') {
+                                            braceCount--;
+                                            if (braceCount === 0) {
+                                                endPos = i + 1;
+                                                break;
+                                            }
+                                        }
+                                    }
                                 }
-                            }
+                                return endPos !== -1 ? str.substring(startPos, endPos) : null;
+                            };
+
+                            const jsonString = extractJsonQuoteAware(content, startIndex);
 
                             if (jsonString) {
                                 this.jsonData = JSON.parse(jsonString);
-                                console.log('[Taobao] Successfully extracted ICE_APP_CONTEXT using Balanced Brace Strategy');
+                                console.log('[Taobao] Successfully extracted ICE_APP_CONTEXT using Quote-Aware Parser');
                                 return;
                             }
                         }
