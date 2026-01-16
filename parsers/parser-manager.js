@@ -108,6 +108,17 @@ class ParserManager {
         const parser = this.getParser(platform);
         return await parser.extractProductLinks();
     }
+
+    /**
+     * 현재 페이지에서 검색 결과 수집
+     * @returns {Promise<Array>} 검색 결과 리스트
+     */
+    async collectSearchResults() {
+        await this.initialize();
+        const platform = PlatformDetector.detect();
+        const parser = this.getParser(platform);
+        return await parser.extractSearchResults();
+    }
 }
 
 // 싱글톤 인스턴스

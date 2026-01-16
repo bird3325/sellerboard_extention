@@ -40,6 +40,15 @@
         "styles/overlay.css"
       ],
       "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "http://localhost:3000/*",
+        "https://sellerboard.vercel.app/*"
+      ],
+      "js": [
+        "content/content-bridge.js"
+      ]
     }
   ],
   "action": {

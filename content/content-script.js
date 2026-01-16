@@ -60,6 +60,10 @@ function setupMessageListeners() {
                 handleGetProductLinks(sendResponse);
                 return true;
 
+            case 'collectSearchResults':
+                handleCollectSearchResults(sendResponse);
+                return true;
+
             case 'updateProgress':
                 if (window.sellerboardWidget) {
                     window.sellerboardWidget.showProgress(message.current, message.total);
@@ -223,6 +227,35 @@ function handleGetProductLinks(sendResponse) {
             sendResponse({ success: true, links: links });
         } catch (error) {
             console.error('링크 추출 오류:', error);
+            sendResponse({ success: false, error: error.message });
+        }
+    })();
+    return true;
+}
+
+/**
+ * 검색 결과 수집 처리
+ */
+function handleCollectSearchResults(sendResponse) {
+    (async () => {
+        try {
+            if (typeof parserManager === 'undefined') {
+                throw new Error('ParserManager not initialized');
+            }
+
+            const results = await parserManager.collectSearchResults();
+
+            // 결과가 없으면 잠시 대기 후 재시도 (렌더링 딜레이 대응)
+            if (!results || results.length === 0) {
+                await new Promise(r => setTimeout(r, 2000));
+                const retryResults = await parserManager.collectSearchResults();
+                sendResponse({ success: true, items: retryResults });
+            } else {
+                sendResponse({ success: true, items: results });
+            }
+
+        } catch (error) {
+            console.error('검색 결과 수집 오류:', error);
             sendResponse({ success: false, error: error.message });
         }
     })();

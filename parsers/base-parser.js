@@ -641,6 +641,84 @@ class BaseParser {
         }
         return [...new Set(links)];
     }
+
+    /**
+     * 검색 결과 페이지에서 상품 리스트 데이터 추출 (Sourcing용)
+     * @returns {Promise<Array>} { id, name, price, imageUrl, detailUrl, platform }
+     */
+    async extractSearchResults() {
+        // 기본 구현: 링크만 수집하는 것이 아니라, 카드 단위로 정보를 긁어와야 함.
+        // 각 플랫폼 파서에서 오버라이딩 권장.
+        // 여기서는 Base 구현으로 "상품 링크"를 포함한 a 태그 주변에서 정보를 긁는 휴리스틱 적용.
+
+        const items = [];
+        const seenUrls = new Set();
+
+        const productLinks = document.querySelectorAll('a[href]');
+
+        for (const a of productLinks) {
+            const h = a.href;
+            if (!h || seenUrls.has(h)) continue;
+
+            const isProduct = (
+                h.includes('/item/') ||
+                h.includes('/product/') ||
+                h.includes('/goods/') ||
+                h.includes('/products/') ||
+                (h.includes('smartstore.naver.com') && h.includes('/products/'))
+            );
+
+            if (!isProduct) continue;
+
+            // 이 a 태그가 "카드"의 일부라고 가정하고, 상위 요소를 탐색하며 컨텍스트 파악
+            // 보통 카드 컨테이너는 div나 li
+            const card = a.closest('div[class*="item"], li, div[class*="card"], div[class*="product"]');
+
+            if (card) {
+                // 카드 내에서 정보 추출
+                let name = '';
+                let price = 0;
+                let imageUrl = '';
+
+                // 1. 이름: card 내의 제목 요소
+                const titleEl = card.querySelector('h1, h2, h3, h4, .title, .name, [class*="title"], [class*="name"');
+                if (titleEl) name = titleEl.textContent.trim();
+                if (!name) name = a.textContent.trim(); // a 태그 자체가 텍스트일 수 있음
+
+                // 2. 가격
+                const priceEl = card.querySelector('[class*="price"], span, strong, em');
+                if (priceEl) {
+                    // 가격 텍스트가 포함된 요소 찾기 (숫자 포함)
+                    const potentialPrices = card.querySelectorAll('[class*="price"], span, strong, div');
+                    for (const p of potentialPrices) {
+                        const txt = p.textContent.trim();
+                        if (/[0-9]/.test(txt) && (txt.includes('$') || txt.includes('won') || txt.includes('원') || txt.includes('¥'))) {
+                            price = this.parsePrice(txt);
+                            if (price > 0) break;
+                        }
+                    }
+                }
+
+                // 3. 이미지
+                const img = card.querySelector('img');
+                if (img) imageUrl = img.src || img.dataset.src;
+
+                if (name && (price > 0 || imageUrl)) {
+                    seenUrls.add(h);
+                    items.push({
+                        id: h, // URL을 ID로 사용
+                        name: name,
+                        price: price,
+                        imageUrl: imageUrl,
+                        detailUrl: h,
+                        platform: this.platform
+                    });
+                }
+            }
+        }
+
+        return items;
+    }
 }
 
 // Export
