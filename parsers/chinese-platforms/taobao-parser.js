@@ -49,6 +49,25 @@ class TaobaoParser extends BaseParser {
             console.error('[Taobao] Option step failed, continuing...', e);
         }
 
+        // [User Request] Overwrite base price with minimum option price
+        if (options && options.length > 0) {
+            let minOptionPrice = Infinity;
+            options.forEach(grp => {
+                if (grp.values) {
+                    grp.values.forEach(v => {
+                        if (v.price && v.price > 0 && v.price < minOptionPrice) {
+                            minOptionPrice = v.price;
+                        }
+                    });
+                }
+            });
+
+            if (minOptionPrice !== Infinity && minOptionPrice > 0) {
+                console.log('[Taobao] Updated base price to min option price:', minOptionPrice);
+                price = minOptionPrice;
+            }
+        }
+
         // Step 4: Description
         let description = { text: '', html: '', images: [] };
         try {
@@ -98,61 +117,156 @@ class TaobaoParser extends BaseParser {
             specifications.push({ name: k, value: v });
         };
 
-        // Strategy 0: JSON Data (Highest fidelity)
+        // Strategy 0: JSON Data (ICE_APP_CONTEXT - Tmall Specific)
         if (this.jsonData) {
-            const groupProps = this.jsonData.groupProps ||
-                (this.jsonData.data && this.jsonData.data.groupProps) ||
-                (this.jsonData.mock && this.jsonData.mock.groupProps);
-            if (groupProps && groupProps[0] && groupProps[0].groupName) {
-                groupProps.forEach(group => {
-                    if (group.props) {
-                        group.props.forEach(p => addSpec(p.name, p.value));
+            let extensionInfo = this.jsonData.loaderData?.home?.data?.res?.extensionInfoVO;
+
+            // Validation function: Check if this object actually has specifications
+            const isValidExtInfo = (obj) => {
+                return obj && obj.infos && Array.isArray(obj.infos) && obj.infos.some(i => i.type === 'BASE_PROPS');
+            };
+
+            // If direct path is invalid, try deep search
+            if (!isValidExtInfo(extensionInfo)) {
+                // Helper to find object with "infos" array containing BASE_PROPS
+                const findExtensionInfo = (obj, depth = 0) => {
+                    if (!obj || depth > 8 || typeof obj !== 'object') return null;
+
+                    if (isValidExtInfo(obj)) return obj;
+
+                    // Optimization: Arrays first
+                    if (Array.isArray(obj)) {
+                        for (const item of obj) {
+                            const found = findExtensionInfo(item, depth + 1);
+                            if (found) return found;
+                        }
+                        return null;
                     }
-                });
+
+                    for (const key in obj) {
+                        // Skip text/huge fields to speed up
+                        if (key === 'html' || key === 'desc' || key.length > 20) continue;
+                        const found = findExtensionInfo(obj[key], depth + 1);
+                        if (found) return found;
+                    }
+                    return null;
+                };
+                extensionInfo = findExtensionInfo(this.jsonData);
             }
-            const props = this.jsonData.props || (this.jsonData.item && this.jsonData.item.props);
-            if (props && Array.isArray(props)) {
-                props.forEach(p => addSpec(p.name, p.value));
+
+            if (isValidExtInfo(extensionInfo)) {
+                try {
+                    const baseProps = extensionInfo.infos.find(i => i.type === 'BASE_PROPS');
+                    if (baseProps && baseProps.items) {
+                        baseProps.items.forEach(item => {
+                            const key = item.title;
+                            const val = item.text ? item.text[0] : '';
+                            addSpec(key, val);
+                        });
+                        console.log('[Taobao] Successfully extracted specs from extensionInfoVO');
+                    }
+                } catch (e) {
+                    console.error('[Taobao] Error parsing extensionInfoVO', e);
+                }
             }
         }
 
-        // Strategy 1: Direct DOM Scraping based on User HTML structure
-        // We use specific substring matchers for the container classes provided.
-        // We DO NOT rely on inner class names (Title/SubTitle) but on DOM Position (Child 0 vs 1).
+        // Strategy 0.5: JSON Data (Deep Search - Fallback)
+        if (this.jsonData) {
+            const foundProps = this.findPropsInObject(this.jsonData);
+            foundProps.forEach(p => addSpec(p.name, p.value));
+        }
 
-        // 1. Emphasis Items (e.g. "High Carbon Steel" - value is emphasized/top)
-        // HTML: <div class="emphasisParamsInfoItem--..."><div ...Title">Value</div><div ...SubTitle">Key</div></div>
+        if (specifications.length > 0) return specifications;
+
+        // Strategy 1: Direct DOM Scraping based on verified Tmall structure
+        await this.scrollForSpecs(); // Ensure specs are loaded
+
+        // 1. Emphasis Items (Top Box)
+
+        // 1. Emphasis Items (Top Box)
+        // Verified: Value has "Title" class, Key has "SubTitle" class
         const empItems = document.querySelectorAll('[class*="emphasisParamsInfoItem--"]');
         empItems.forEach(item => {
-            if (item.children.length >= 2) {
-                // Child 0 is Title (Value in this context)
-                // Child 1 is SubTitle (Key in this context)
-                const valNode = item.children[0];
-                const keyNode = item.children[1];
+            const valNode = item.querySelector('[class*="emphasisParamsInfoItemTitle--"]');
+            const keyNode = item.querySelector('[class*="emphasisParamsInfoItemSubTitle--"]');
 
-                const val = valNode.getAttribute('title') || valNode.textContent;
-                const key = keyNode.getAttribute('title') || keyNode.textContent;
-
+            if (valNode && keyNode) {
+                const key = keyNode.getAttribute('title') || keyNode.textContent.trim();
+                const val = valNode.getAttribute('title') || valNode.textContent.trim();
                 addSpec(key, val);
             }
         });
 
-        // 2. General Items (e.g. "Brand: WuQiBao" - standard list)
-        // HTML: <div class="generalParamsInfoItem--..."><div ...Title">Key</div><div ...SubTitle">Value</div></div>
+        // 2. General Items (List)
+        // Verified: Key has "Title" class, Value has "SubTitle" class
         const genItems = document.querySelectorAll('[class*="generalParamsInfoItem--"]');
         genItems.forEach(item => {
-            if (item.children.length >= 2) {
-                // Child 0 is Title (Key in this context)
-                // Child 1 is SubTitle (Value in this context)
-                const keyNode = item.children[0];
-                const valNode = item.children[1];
+            const keyNode = item.querySelector('[class*="generalParamsInfoItemTitle--"]');
+            const valNode = item.querySelector('[class*="generalParamsInfoItemSubTitle--"]');
 
-                const key = keyNode.getAttribute('title') || keyNode.textContent;
-                const val = valNode.getAttribute('title') || valNode.textContent;
-
+            if (keyNode && valNode) {
+                const key = keyNode.getAttribute('title') || keyNode.textContent.trim();
+                const val = valNode.getAttribute('title') || valNode.textContent.trim();
                 addSpec(key, val);
             }
         });
+
+        if (specifications.length > 0) return specifications;
+
+        // Strategy A: Header Search (Generic Fallback)
+        try {
+            const allElements = document.querySelectorAll('div, h4, th');
+            for (const el of allElements) {
+                const txt = el.textContent.trim();
+                if (txt === '参数信息' || txt === '产品参数' || txt.includes('规格参数')) {
+                    // Search Siblings and Parent's Siblings
+                    let container = el.parentElement;
+                    let foundList = false;
+
+                    // Search up to 5 levels up for a list container
+                    for (let i = 0; i < 5; i++) {
+                        if (!container) break;
+
+                        // Check if this container has many children that look like list items
+                        const children = container.querySelectorAll('li, div, dl');
+                        let qualifiedChildren = [];
+
+                        children.forEach(c => {
+                            // Check if child has structure of Spec Item (2 parts)
+                            if (c.childElementCount === 2 || (c.textContent.includes('：') || c.textContent.includes(':'))) {
+                                qualifiedChildren.push(c);
+                            }
+                        });
+
+
+                        if (qualifiedChildren.length > 3) {
+                            qualifiedChildren.forEach(c => {
+                                let k, v;
+                                if (c.childElementCount === 2) {
+                                    // Assume first is key, second is value (most common) or check classes
+                                    k = c.children[0].textContent.trim();
+                                    v = c.children[1].textContent.trim();
+                                } else {
+                                    const parts = c.textContent.split(/[:：]/);
+                                    if (parts.length >= 2) {
+                                        k = parts[0].trim();
+                                        v = parts.slice(1).join(':').trim();
+                                    }
+                                }
+                                addSpec(k, v);
+                            });
+                            foundList = true;
+                            break;
+                        }
+                        container = container.parentElement;
+                    }
+                    if (foundList) break;
+                }
+            }
+        } catch (e) {
+            console.warn('[Taobao] Generic Spec Search failed', e);
+        }
 
         if (specifications.length > 0) return specifications;
 
@@ -169,6 +283,43 @@ class TaobaoParser extends BaseParser {
         return specifications;
     }
 
+    findPropsInObject(obj, depth = 0) {
+        if (!obj || depth > 10 || typeof obj !== 'object') return [];
+        let results = [];
+
+        // Check if array of props
+        if (Array.isArray(obj)) {
+            // Check if this array contains prop-like objects
+            const isPropArray = obj.every(item => item && item.name && item.value && typeof item.name === 'string');
+            if (isPropArray && obj.length > 0) {
+                return obj;
+            }
+            obj.forEach(item => results = results.concat(this.findPropsInObject(item, depth + 1)));
+            return results;
+        }
+
+        // Object search
+        if (obj.groupProps && Array.isArray(obj.groupProps)) {
+            obj.groupProps.forEach(g => {
+                if (g.props) results = results.concat(g.props);
+            });
+        }
+        if (obj.props && Array.isArray(obj.props)) {
+            // Validate props
+            if (obj.props.length > 0 && obj.props[0].name && obj.props[0].value) {
+                results = results.concat(obj.props);
+            }
+        }
+
+        Object.keys(obj).forEach(key => {
+            if (key !== 'groupProps' && key !== 'props') { // Optimization
+                results = results.concat(this.findPropsInObject(obj[key], depth + 1));
+            }
+        });
+
+        return results;
+    }
+
     async stepLoadJsonData() {
         try {
             this.jsonData = null;
@@ -176,7 +327,60 @@ class TaobaoParser extends BaseParser {
             for (const script of scripts) {
                 const content = script.textContent.trim();
 
-                // 1. _DATA_Detail (Common in mobile/H5/modern PC)
+                // Strategy 1: Check for __ICE_APP_CONTEXT__ script source (Tmall)
+                // We parse the script text directly because extension isolation or hydration might hide the data in the window object.
+                if (content.includes('__ICE_APP_CONTEXT__') && content.includes('extensionInfoVO')) {
+                    console.log('[Taobao] Found ICE_APP_CONTEXT script');
+                    try {
+                        // Pattern: var b = {"appData": ... };
+                        // Robust Extraction: Balanced Brace Counting
+                        // Regex is too brittle for nested JSON containing "};". 
+
+                        const startMarker = '{"appData":';
+                        const startIndex = content.indexOf(startMarker);
+
+                        if (startIndex !== -1) {
+                            // Helper inside scope for robust parsing
+                            const extractJsonQuoteAware = (str, startPos) => {
+                                let braceCount = 0;
+                                let inString = false;
+                                let escaped = false;
+                                let endPos = -1;
+
+                                for (let i = startPos; i < str.length; i++) {
+                                    const char = str[i];
+                                    if (escaped) { escaped = false; continue; }
+                                    if (char === '\\') { escaped = true; continue; }
+                                    if (char === '"') { inString = !inString; continue; }
+
+                                    if (!inString) {
+                                        if (char === '{') braceCount++;
+                                        else if (char === '}') {
+                                            braceCount--;
+                                            if (braceCount === 0) {
+                                                endPos = i + 1;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                return endPos !== -1 ? str.substring(startPos, endPos) : null;
+                            };
+
+                            const jsonString = extractJsonQuoteAware(content, startIndex);
+
+                            if (jsonString) {
+                                this.jsonData = JSON.parse(jsonString);
+                                console.log('[Taobao] Successfully extracted ICE_APP_CONTEXT using Quote-Aware Parser');
+                                return;
+                            }
+                        }
+                    } catch (parseErr) {
+                        console.warn('[Taobao] Failed to parse ICE_APP_CONTEXT from script', parseErr);
+                    }
+                }
+
+                // Strategy 2: _DATA_Detail (Common in mobile/H5/modern PC)
                 if (content.includes('_DATA_Detail')) {
                     const match = content.match(/_DATA_Detail\s*=\s*({[\s\S]+?});/);
                     if (match && match[1]) {
@@ -769,7 +973,20 @@ class TaobaoParser extends BaseParser {
                 }
 
                 if (values.length > 0) {
-                    options.push({ name, values });
+                    options.push({
+                        name,
+                        type: 'sku',
+                        values: values.map(v => ({
+                            text: v.value,
+                            image: v.imageUrl,
+                            price: v.price,
+                            stock: v.stock,
+                            value: v.value,
+                            selected: false,
+                            priceText: v.price > 0 ? `${v.price}` : null, // Placeholder
+                            priceType: 'absolute'
+                        }))
+                    });
                 }
             }
 
@@ -822,7 +1039,20 @@ class TaobaoParser extends BaseParser {
             }
 
             if (values.length > 0) {
-                options.push({ name, values });
+                options.push({
+                    name,
+                    type: 'sku',
+                    values: values.map(v => ({
+                        text: v.value,
+                        image: v.imageUrl,
+                        price: v.price,
+                        stock: v.stock,
+                        value: v.value,
+                        selected: false,
+                        priceText: v.price > 0 ? `${v.price}` : null,
+                        priceType: 'absolute'
+                    }))
+                });
             }
         }
 
@@ -1074,6 +1304,42 @@ class TaobaoParser extends BaseParser {
         } catch (e) { }
 
         return 'CNY'; // Default for Taobao
+    }
+
+    async scrollForSpecs() {
+        return new Promise(resolve => {
+            // Try to find the spec header or container to scroll to
+            const specTarget = document.querySelector('[class*="paramsInfoArea"]') ||
+                document.querySelector('[class*="paramsWrap--"]') ||
+                Array.from(document.querySelectorAll('div, h4, th')).find(el =>
+                    (el.textContent.includes('参数信息') || el.textContent.includes('产品参数')) && el.offsetParent !== null
+                );
+
+            if (specTarget) {
+                specTarget.scrollIntoView({ behavior: 'instant', block: 'center' });
+            } else {
+                // Even if we don't find the scroll target, we should still try to poll
+                // because it might appear later or be somewhere we missed scrolling to
+            }
+
+            // POLLING: Wait until spec items appear in the DOM
+            // We use the verified classes from our browser session
+            let attempts = 0;
+            const maxAttempts = 25; // 25 * 200ms = 5 seconds
+            const interval = setInterval(() => {
+                attempts++;
+                const empItems = document.querySelectorAll('[class*="emphasisParamsInfoItem--"]');
+                const genItems = document.querySelectorAll('[class*="generalParamsInfoItem--"]');
+
+                if (empItems.length > 0 || genItems.length > 0) {
+                    clearInterval(interval);
+                    resolve();
+                } else if (attempts >= maxAttempts) {
+                    clearInterval(interval);
+                    resolve(); // Give up waiting
+                }
+            }, 200);
+        });
     }
 }
 
