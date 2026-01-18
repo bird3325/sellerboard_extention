@@ -32,6 +32,318 @@ class AliexpressParser extends BaseParser {
         };
     }
 
+    async extractSearchResults(filters = {}) {
+        // limit 적용
+        const limit = filters.limit || 1000;
+        const items = [];
+        const seenIds = new Set();
+
+        // Scroll to bottom to trigger lazy loading
+        await this.scrollToBottom();
+
+        // Product Card Selectors (Modern & Legacy)
+        const selectors = [
+            '.k7_v', // User provided structure wrapper - Priority 1
+            '.search-item-card-wrapper-gallery', // Modern
+            '.list-item',
+            '.product-card',
+            '[class*="manhattan--container"]',
+            '.search-card-item'
+        ];
+
+        // Find all potential cards
+        let cards = [];
+        for (const sel of selectors) {
+            const elements = document.querySelectorAll(sel);
+            if (elements.length > 0) {
+                cards = Array.from(elements);
+                // console.log(`[AliexpressParser] Found ${cards.length} cards using selector: ${sel}`);
+                break;
+            }
+        }
+
+        // Fallback: Find by Child Elements (User provided structure: .k7_v > .k7_kw / .k7_lu)
+        if (cards.length === 0) {
+            // Try finding titles or prices and going up to parent
+            const childSelectors = ['.k7_kw', '.k7_lu', '.k7_z'];
+            for (const childSel of childSelectors) {
+                const children = document.querySelectorAll(childSel);
+                if (children.length > 0) {
+                    // Assuming structure: k7_v (card) > ... > k7_kw (child)
+                    // We traverse up to find a div that looks like a wrapper
+                    // user snippet: k7_v > k7_z > ...
+                    const foundCards = new Set();
+                    children.forEach(child => {
+                        // Traverse up 1-3 levels to find the card container
+                        let parent = child.parentElement;
+                        for (let i = 0; i < 4; i++) {
+                            if (!parent) break;
+                            if (parent.classList.contains('k7_v') || parent.tagName === 'DIV' || parent.tagName === 'A') {
+                                // If it has class k7_v, it's definitely it.
+                                // If not, we might be guessing. 
+                                // But if we found the child, we likely found a card.
+                                // Let's use the closest meaningful DIV.
+                                if (parent.classList.contains('k7_v')) {
+                                    foundCards.add(parent);
+                                    break;
+                                }
+                            }
+                            parent = parent.parentElement;
+                        }
+                        // If we didn't find k7_v explicitly but found children, 
+                        // maybe the user ID'd the container wrong? 
+                        // Let's rely on the first loop mainly. 
+                        // But if that failed, let's try to grab the parent of k7_kw (title)
+                        if (childSel === '.k7_kw') {
+                            // Title is usually direct child or close descendant
+                            const cardCandidate = child.closest('.k7_v') || child.closest('div[class*="item"]');
+                            if (cardCandidate) foundCards.add(cardCandidate);
+                        }
+                    });
+
+                    if (foundCards.size > 0) {
+                        cards = Array.from(foundCards);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Heuristic Fallback: Find links looking like products and analyze their containers
+        if (cards.length === 0) {
+            // console.log('[AliexpressParser] Class selectors failed. Trying heuristic search...');
+            const allLinks = document.querySelectorAll('a[href*="/item/"]');
+            const candidates = new Set();
+
+            allLinks.forEach(link => {
+                // Determine a potential card container by traversing up
+                // We stop at the first DIV that looks "wrappery" (has text content and structure)
+                let parent = link.parentElement;
+                let foundContainer = null;
+
+                // Go up 5 levels max
+                for (let i = 0; i < 5; i++) {
+                    if (!parent) break;
+                    // Check if this parent has price-like text
+                    const text = parent.textContent;
+                    if ((text.includes('$') || text.includes('₩') || text.includes('US') || text.includes('KRW')) &&
+                        /\d/.test(text)) { // Must have numbers
+                        foundContainer = parent;
+                        // Don't break immediately, go up one more to capture full card? 
+                        // Actually, the smallest container with price + name is best.
+                        // But usually the card contains the image too.
+                        if (parent.querySelector('img')) {
+                            // Found a container with Price + Image + Link
+                            break;
+                        }
+                    }
+                    parent = parent.parentElement;
+                }
+
+                if (foundContainer) {
+                    candidates.add(foundContainer);
+                } else {
+                    // Fallback: just use the parent div of the link
+                    candidates.add(link.closest('div') || link);
+                }
+            });
+
+            if (candidates.size > 0) {
+                cards = Array.from(candidates);
+                // Filter out small elements (likely just text links)
+                cards = cards.filter(c => c.textContent.length > 20 && c.tagName !== 'SPAN');
+            }
+        }
+
+        for (const card of cards) {
+            if (items.length >= limit) break;
+
+            try {
+                // Link Extraction
+                const linkEl = card.querySelector('a[href*="/item/"]') || card.closest('a') || card.querySelector('a');
+                if (!linkEl) continue;
+
+                let href = linkEl.href;
+                if (!href || !href.includes('/item/')) continue;
+
+                // Clean URL
+                href = href.split('?')[0];
+
+                // ID Extraction (from URL)
+                const idMatch = href.match(/\/item\/(\d+)\.html/);
+                const id = idMatch ? idMatch[1] : href;
+
+                if (seenIds.has(id)) continue;
+                seenIds.add(id);
+
+                // Title Extraction - Try User Selector -> Common -> H tags -> Longest Text
+                let name = '';
+                const userTitle = card.querySelector('.k7_kw');
+                if (userTitle) name = userTitle.textContent.trim();
+
+                if (!name) {
+                    const titleEl = card.querySelector('h1, h2, h3, [class*="title"], .item-title');
+                    if (titleEl) name = titleEl.textContent.trim();
+                }
+
+                // Last resort for title: Find the text node with longest length in the link
+                if (!name) {
+                    name = linkEl.textContent.trim();
+                    if (name.length < 5) {
+                        // Check image alt
+                        const img = card.querySelector('img');
+                        if (img && img.alt) name = img.alt;
+                    }
+                }
+
+                // Price Extraction (Enhanced with User Structure + Heuristics)
+                let price = 0;
+
+                // 1. User Selector
+                const userPriceEl = card.querySelector('.k7_lu');
+                if (userPriceEl) {
+                    const priceText = userPriceEl.textContent.replace(/[^0-9.]/g, '');
+                    price = parseFloat(priceText) || 0;
+                }
+
+                // 2. Common Selectors
+                if (price === 0) {
+                    const priceEl = card.querySelector('[class*="price"], [class*="Price"]');
+                    if (priceEl) {
+                        // exclude hidden or non-current prices if possible? 
+                        // Simple extraction
+                        price = parseFloat(priceEl.textContent.replace(/[^0-9.]/g, '')) || 0;
+                    }
+                }
+
+                // 3. Text Walker (The most robust fallback)
+                if (price === 0) {
+                    const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+                    while (walker.nextNode()) {
+                        const txt = walker.currentNode.textContent.trim();
+                        // Look for currency symbols or patterns like "10,000원", "US $10.00"
+                        if (/(?:₩|KRW|\$|US\s*\$)\s*[\d,]+/.test(txt)) {
+                            price = parseFloat(txt.replace(/[^0-9.]/g, '')) || 0;
+                            if (price > 0) break;
+                        }
+                    }
+                }
+
+                // Image Extraction (Robust)
+                let imageUrl = '';
+                const imgs = Array.from(card.querySelectorAll('img'));
+
+                // Sort by likely relevance (size or class)
+                // Filter out obviously small icons
+                const validImgs = imgs.filter(img => {
+                    const w = img.width || 0;
+                    const h = img.height || 0;
+                    // Skip very small icons
+                    if (w > 0 && w < 50) return false;
+                    if (h > 0 && h < 50) return false;
+                    return true;
+                });
+
+                if (validImgs.length > 0) {
+                    // Prefer images with 'product' or 'search' in class or src
+                    // Or just take the first larger image
+                    let bestImg = validImgs.find(img => img.className.includes('product') || img.src.includes('.jpg') || img.src.includes('.png'));
+                    if (!bestImg) bestImg = validImgs[0];
+
+                    imageUrl = bestImg.src || bestImg.dataset.src || '';
+                    if (imageUrl.startsWith('//')) imageUrl = 'https:' + imageUrl;
+                } else {
+                    // Fallback: Check if the card itself has a background image? Unlikely for search results.
+                    // Try finding image in the link element
+                    const linkImg = linkEl.querySelector('img');
+                    if (linkImg) {
+                        imageUrl = linkImg.src || linkImg.dataset.src || '';
+                        if (imageUrl.startsWith('//')) imageUrl = 'https:' + imageUrl;
+                    }
+                }
+
+                // Sales Extraction (Enhanced with User Structure)
+                // User provided: span.k7_km text "92 판매"
+                let salesText = '';
+                const userSalesEl = card.querySelector('.k7_km');
+                if (userSalesEl) {
+                    salesText = userSalesEl.textContent.trim();
+                }
+
+                if (!salesText) {
+                    const salesEl = card.querySelector('[class*="sales--"], .manhattan--trade--2PeJIEB');
+                    if (salesEl) {
+                        salesText = salesEl.textContent.trim();
+                    } else {
+                        const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+                        while (walker.nextNode()) {
+                            const txt = walker.currentNode.textContent.trim();
+                            if (/(sold|orders|판매|누적)/i.test(txt)) {
+                                salesText = txt;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Rating Extraction (Enhanced with User Structure)
+                // User provided: span.k7_kg text "4.6"
+                let rating = 0;
+                const userRatingEl = card.querySelector('.k7_kg');
+                if (userRatingEl) {
+                    rating = parseFloat(userRatingEl.textContent.trim()) || 0;
+                }
+
+                if (rating === 0) {
+                    const starEl = card.querySelector('[class*="star--"], .manhattan--star--3m-Uq-o');
+                    if (starEl) {
+                        rating = parseFloat(starEl.textContent.trim()) || 0;
+                    }
+                }
+
+                if (rating === 0) {
+                    const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+                    while (walker.nextNode()) {
+                        const txt = walker.currentNode.textContent.trim();
+                        if (/^[45]\.\d$/.test(txt)) { // "4.8", "5.0"
+                            rating = parseFloat(txt);
+                            break;
+                        }
+                    }
+                }
+
+                // Clean Sales Volume
+                let salesVolume = 0;
+                if (salesText) {
+                    // "92 판매", "1,000+ sold" -> 92, 1000
+                    // 숫자만 추출 (콤마 제거)
+                    const numStr = salesText.replace(/,/g, '').replace(/[^0-9]/g, '');
+                    if (numStr) {
+                        salesVolume = parseInt(numStr, 10);
+                    }
+                }
+
+                if (name && href) {
+                    items.push({
+                        id,
+                        name,
+                        price,
+                        imageUrl,
+                        detailUrl: href,
+                        platform: 'aliexpress',
+                        salesVolume, // 숫자만 저장
+                        rating: rating,
+                        reviewCount: 0
+                    });
+                }
+            } catch (e) {
+                // Ignore individual card errors
+            }
+        }
+
+        return items;
+    }
+
     async extractName() {
         // 동적 로딩 대기
         await this.wait(1000);
@@ -57,11 +369,70 @@ class AliexpressParser extends BaseParser {
         // 가격 로딩 대기
         await this.wait(500);
 
-        // BaseParser의 강력한 로직 사용 (다중 선택자 + 메타태그 + 본문 검색)
+        // 1. User specific selector (Prioritize current price over discount)
+        const specificSelectors = [
+            '[class*="price-kr--current"]',
+            '.price--currentPriceText--V8_y_b5',
+            '.product-price-value',
+            '[class*="price--current"]',
+            '.uniform-banner-box-price',
+            '.sku-price'
+        ];
+
+        // Helper to parse price from text strictly
+        const parsePrice = (text) => {
+            if (!text) return 0;
+
+            // 1. Strict Regex: Look for Currency Symbol followed by Number
+            // e.g. "US $244.01", "₩ 10,000", "$50.5"
+            // Handles comma and dot correctly
+            const currencyRegex = /(?:US\s*\$|USD|₩|KRW|\$|€|£|¥)\s*([\d,.]+)/i;
+            const match = text.match(currencyRegex);
+            if (match) {
+                const numStr = match[1].replace(/,/g, '');
+                return parseFloat(numStr) || 0;
+            }
+
+            // 2. Trailing Currency Regex (e.g. "1000원")
+            // Strict check to ensure no bare numbers are accepted
+            const trailingRegex = /([\d,.]+)\s*(?:원|won|KRW)/i;
+            const matchTrailing = text.match(trailingRegex);
+            if (matchTrailing) {
+                const numStr = matchTrailing[1].replace(/,/g, '');
+                return parseFloat(numStr) || 0;
+            }
+
+            // 3. REJECT bare numbers if no currency symbol found
+            // This prevents "5%" from being parsed as "5"
+            return 0;
+        };
+
+        for (const sel of specificSelectors) {
+            const els = document.querySelectorAll(sel);
+            for (const el of els) {
+                // Ignore if class indicates discount
+                if (el.className.includes('discount') || el.className.includes('original')) continue;
+
+                const txt = el.textContent.trim();
+                const price = parsePrice(txt);
+                if (price > 0) return price;
+            }
+        }
+
+        // 2. Fallback: Search in Price-looking elements generally (stricter than before)
+        const fallbackEls = document.querySelectorAll('[class*="price"]');
+        for (const el of fallbackEls) {
+            // Skip known bad classes
+            if (el.className.includes('discount') || el.className.includes('del') || el.className.includes('original')) continue;
+
+            const txt = el.textContent.trim();
+            const price = parsePrice(txt);
+            if (price > 0) return price;
+        }
+
+        // 3. Fallback to generic text search via BaseParser (usually meta tags)
         return await super.extractPrice();
     }
-
-
 
     async extractOptions() {
         const opts = [];
@@ -190,7 +561,8 @@ class AliexpressParser extends BaseParser {
                             const priceEl = document.querySelector(priceSelector);
                             if (priceEl) {
                                 priceText = priceEl.textContent.trim();
-                                const priceMatch = priceText.match(/(?:US\s*)?\$?\s*([\d,]+\.?\d*)/);
+                                // STRICT CURRENCY CHECK also here
+                                const priceMatch = priceText.match(/(?:US\s*\$|USD|₩|KRW|\$|€|£|¥)\s*([\d,]+\.?\d*)/i);
                                 if (priceMatch) {
                                     price = parseFloat(priceMatch[1].replace(/,/g, ''));
                                 }
@@ -848,6 +1220,29 @@ class AliexpressParser extends BaseParser {
         // 페이지 완전 로딩 대기
         await this.wait(2000);
         return await super.parseProduct();
+    }
+    async scrollToBottom() {
+        return new Promise((resolve) => {
+            let totalHeight = 0;
+            // Scroll faster/more aggressively
+            let distance = 500;
+            let maxScrolls = 30; // Max 30 scrolls * 100ms = 3s approx
+            let count = 0;
+
+            let timer = setInterval(() => {
+                let scrollHeight = document.body.scrollHeight;
+                window.scrollBy(0, distance);
+                totalHeight += distance;
+                count++;
+
+                // Stop if we scrolled enough or hit bottom
+                if ((window.innerHeight + window.scrollY) >= scrollHeight || count >= maxScrolls) {
+                    clearInterval(timer);
+                    // Wait a bit for final render
+                    setTimeout(resolve, 1000);
+                }
+            }, 100);
+        });
     }
 }
 

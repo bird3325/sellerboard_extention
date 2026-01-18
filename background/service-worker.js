@@ -101,72 +101,131 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 /**
  * 소싱 요청 처리 (Web App -> Extension)
  */
-async function performSourcing({ keyword, platform, limit = 50 }) {
+async function performSourcing({ keyword, platform, sourcing_workflows }) {
     console.log(`[ServiceWorker] 소싱 시작: 키워드="${keyword}", 플랫폼="${platform}"`);
     let tabId = null;
 
     try {
-        // 1. 검색 URL 생성
+        // 1. 설정 추출 (sourcing_workflows에서 id: "3" 모듈 찾기)
+        let limit = 50; // 기본값
+        let sortType = ''; // 정렬 기준
+
+        if (sourcing_workflows && sourcing_workflows.modules) {
+            const module = sourcing_workflows.modules.find(m => m.id === "3");
+            if (module) {
+                // Config 구조 지원 (module.config.limit 또는 module.limit)
+                const config = module.config || module;
+                if (config.limit) limit = parseInt(config.limit, 10);
+                if (config.sortBy) sortType = config.sortBy;
+                else if (config.sort) sortType = config.sort;
+
+                console.log(`[ServiceWorker] 워크플로우 설정 적용: Limit=${limit}, Sort=${sortType}`);
+            }
+        }
+
+        // 2. 검색 URL 생성 (정렬 파라미터 적용)
         let searchUrl = '';
+        const encodedKeyword = encodeURIComponent(keyword);
+
         if (platform === '1688') {
-            searchUrl = `https://s.1688.com/selloffer/offer_search.htm?keywords=${encodeURIComponent(keyword)}`;
-        } else if (platform === 'taobao') {
-            searchUrl = `https://s.taobao.com/search?q=${encodeURIComponent(keyword)}`;
-        } else if (platform === 'coupang') {
-            searchUrl = `https://www.coupang.com/np/search?q=${encodeURIComponent(keyword)}`;
-        } else if (platform === 'aliexpress') {
-            searchUrl = `https://www.aliexpress.com/wholesale?SearchText=${encodeURIComponent(keyword)}`;
-        } else {
+            searchUrl = `https://s.1688.com/selloffer/offer_search.htm?keywords=${encodedKeyword}`;
+            // 1688 정렬 매핑
+            if (sortType === 'price_asc') searchUrl += '&sortType=price';
+            else if (sortType === 'sales_desc') searchUrl += '&sortType=booked';
+        }
+        else if (platform === 'taobao') {
+            searchUrl = `https://s.taobao.com/search?q=${encodedKeyword}`;
+            // 타오바오 정렬 매핑
+            if (sortType === 'price_asc') searchUrl += '&sort=price-asc';
+            else if (sortType === 'sales_desc') searchUrl += '&sort=sale-desc';
+            else if (sortType === 'credit_desc') searchUrl += '&sort=credit-desc';
+        }
+        else if (platform === 'coupang') {
+            searchUrl = `https://www.coupang.com/np/search?q=${encodedKeyword}`;
+            // 쿠팡 정렬 매핑
+            if (sortType === 'price_asc') searchUrl += '&sorter=salePriceAsc'; // 낮은가격순
+            else if (sortType === 'sales_desc') searchUrl += '&sorter=saleVolume'; // 판매량순
+            else if (sortType === 'latest_desc') searchUrl += '&sorter=latestAsc'; // 최신순 (오름차순이 최신?) -> 보통 latestDesc 확인 필요, 쿠팡은 sorter 사용
+        }
+        else if (platform === 'aliexpress') {
+            searchUrl = `https://www.aliexpress.com/wholesale?SearchText=${encodedKeyword}`;
+            // 알리 정렬 매핑
+            if (sortType === 'price_asc') searchUrl += '&SortType=price_asc';
+            else if (sortType === 'sales_desc') searchUrl += '&SortType=orders_desc';
+            else if (sortType === 'rating_desc') searchUrl += '&SortType=seller_rating_desc'; // 존재하는지 확인 필요, 보통 orders나 default
+            else searchUrl += '&SortType=default';
+        }
+        else {
             throw new Error(`지원하지 않는 플랫폼입니다: ${platform}`);
         }
 
-        // 2. 새 탭 열기 (활성화 상태로)
+        // 3. 새 탭 열기 (활성화 상태로)
         const tab = await chrome.tabs.create({ url: searchUrl, active: true });
         tabId = tab.id;
 
-        // 3. 페이지 로딩 대기
+        // 4. 페이지 로딩 대기
         await waitForTabLoad(tabId);
         await delay(2000); // 추가 안정화
 
-        // 4. 스크립트 주입 (필요한 경우) 및 데이터 수집 요청
-        // sendMessageToTabWithRetry가 자동으로 스크립트 주입을 시도함
-        // [변경] 단순 링크 수집이 아닌, 검색 결과 페이지에서 메타데이터(이미지, 가격, 제목 등)를 긁어오도록 변경
+        // 5. 스크립트 주입 및 데이터 수집 요청
+        // limit을 함께 전송하여 파서에서 최적화 할 수 있도록 함 (선택적)
         const response = await sendMessageToTabWithRetry(tabId, {
-            action: 'collectSearchResults'
+            action: 'collectSearchResults',
+            filters: { limit }
         });
 
         if (!response || !response.success) {
             throw new Error(response?.error || '데이터 수집 실패');
         }
 
-        // 5. 수집된 아이템 매핑
-        const items = response.items || [];
+        // 6. 수집된 아이템 매핑 및 제한 적용
+        let items = response.items || [];
+        console.log(`[ServiceWorker] 탭에서 수집된 원본 아이템 수: ${items.length}`);
 
-        // Limit 적용 및 필수 필드 보정
-        const limitedItems = items.slice(0, limit).map((item, index) => ({
+        if (items.length === 0) {
+            console.warn('[ServiceWorker] 수집된 아이템이 없습니다.');
+        }
+
+        // Limit 적용 (앞에서부터 자름)
+        if (items.length > limit) {
+            items = items.slice(0, limit);
+        }
+
+        const limitedItems = items.map((item, index) => ({
             id: item.id || `temp_${Date.now()}_${index}`,
             name: item.name || 'No Name',
             price: typeof item.price === 'string' ? parseFloat(item.price.replace(/[^0-9.]/g, '')) : item.price,
-            // imageUrl: item.imageUrl || '', // 사용자 요청으로 제외
             detailUrl: item.detailUrl || item.url || '',
-            platform: platform
+            imageUrl: item.imageUrl || '',
+            platform: platform,
+            rating: item.rating || 0,
+            salesVolume: item.salesText || item.salesVolume || '',
+            reviewCount: item.reviewCount || 0
         }));
 
-        // 로컬 스토리지에 임시 저장 (사용자 요청)
+        console.log(`[ServiceWorker] 최종 저장할 아이템 수: ${limitedItems.length}`);
+
+        // 로컬 스토리지에 결과 저장
         try {
             await chrome.storage.local.set({ 'sourcing_results': limitedItems });
+
+            // 저장 확인
+            const check = await chrome.storage.local.get('sourcing_results');
+            console.log('[ServiceWorker] 저장 확인 (sourcing_results):', check.sourcing_results ? check.sourcing_results.length : 0);
+
             console.log('[ServiceWorker] 소싱 결과 로컬스토리지 저장 완료');
         } catch (storageError) {
             console.error('[ServiceWorker] 로컬스토리지 저장 실패:', storageError);
         }
 
-        // 6. 탭 닫기 (선택 사항: 디버깅 위해 열어둘 수도 있으나, 자동화 관점에서는 닫는 게 깔끔)
+        // 7. 탭 닫기
         await chrome.tabs.remove(tabId);
 
         return limitedItems;
 
     } catch (error) {
         console.error('[ServiceWorker] performSourcing 에러:', error);
+        if (tabId) try { await chrome.tabs.remove(tabId); } catch (e) { } // 에러 시에도 탭 정리
         throw error;
     }
 }

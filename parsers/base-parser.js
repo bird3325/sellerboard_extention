@@ -15,7 +15,7 @@ class BaseParser {
      * @returns {Object} CSS 선택자 객체
      */
     getSelectors() {
-        throw new Error('getSelectors() must be implemented by subclass');
+        return {}; // 기본 빈 객체 반환 (오류 방지)
     }
 
     /**
@@ -644,19 +644,24 @@ class BaseParser {
 
     /**
      * 검색 결과 페이지에서 상품 리스트 데이터 추출 (Sourcing용)
+     * @param {Object} filters - 필터 옵션
      * @returns {Promise<Array>} { id, name, price, imageUrl, detailUrl, platform }
      */
-    async extractSearchResults() {
+    async extractSearchResults(filters = {}) {
         // 기본 구현: 링크만 수집하는 것이 아니라, 카드 단위로 정보를 긁어와야 함.
         // 각 플랫폼 파서에서 오버라이딩 권장.
         // 여기서는 Base 구현으로 "상품 링크"를 포함한 a 태그 주변에서 정보를 긁는 휴리스틱 적용.
 
         const items = [];
         const seenUrls = new Set();
+        const limit = filters.limit || 1000; // 기본 제한
 
         const productLinks = document.querySelectorAll('a[href]');
 
         for (const a of productLinks) {
+            // 제한 도달 시 중단 (최적화)
+            if (items.length >= limit) break;
+
             const h = a.href;
             if (!h || seenUrls.has(h)) continue;
 

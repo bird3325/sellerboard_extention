@@ -25,6 +25,100 @@ class TaobaoParser extends BaseParser {
         };
     }
 
+    async extractSearchResults(filters = {}) {
+        // limit 적용
+        const limit = filters.limit || 1000;
+        const items = [];
+        const seenIds = new Set();
+
+        // Taobao Product Card Selectors
+        const selectors = [
+            '.item',
+            '.ctx-box',
+            '.J_MouserOnverReq',
+            '[class*="Card--doubleCardWrapper"]', // New Taobao
+            '.item-service'
+        ];
+
+        // Find all potential cards
+        let cards = [];
+        for (const sel of selectors) {
+            const elements = document.querySelectorAll(sel);
+            if (elements.length > 0) {
+                cards = Array.from(elements);
+                if (cards.length > 5) break;
+            }
+        }
+
+        // Taobao often uses script-based rendering, so if DOM is empty, we check common wrappers
+        if (cards.length === 0) {
+            const wrappers = document.querySelectorAll('[class*="Content--contentInner"] > div');
+            if (wrappers.length > 0) {
+                cards = Array.from(wrappers);
+            }
+        }
+
+        for (const card of cards) {
+            if (items.length >= limit) break;
+
+            try {
+                // Link
+                const linkEl = card.querySelector('a[href^="//item.taobao.com"], a[href^="//detail.tmall.com"], a[id*="J_Itemlist_PLink"]');
+                if (!linkEl) continue;
+
+                let href = linkEl.href;
+                if (!href) continue;
+                if (href.startsWith('//')) href = 'https:' + href;
+
+                // ID
+                let id = 'unknown';
+                const idMatch = href.match(/id=(\d+)/);
+                if (idMatch) id = idMatch[1];
+
+                if (seenIds.has(id)) continue;
+                seenIds.add(id);
+
+                // Title
+                const titleEl = card.querySelector('.title, .row-2, [class*="Title--title"]');
+                const name = titleEl ? titleEl.textContent.trim() : '';
+
+                // Price
+                const priceEl = card.querySelector('.price strong, .g_price strong, [class*="Price--priceInt"]');
+                let price = 0;
+                if (priceEl) {
+                    price = parseFloat(priceEl.textContent.trim()) || 0;
+                }
+
+                // Image
+                const imgEl = card.querySelector('.pic img, .J_ItemPic, [class*="MainPic--mainPic"]');
+                let imageUrl = '';
+                if (imgEl) {
+                    imageUrl = imgEl.src || imgEl.dataset.src || '';
+                    if (imageUrl.startsWith('//')) imageUrl = 'https:' + imageUrl;
+                }
+
+                // Sales/Location (for sorting verification)
+                const salesEl = card.querySelector('.deal-cnt, [class*="Price--realSales"]');
+                const salesText = salesEl ? salesEl.textContent : '';
+
+                if (name) {
+                    items.push({
+                        id,
+                        name,
+                        price,
+                        imageUrl,
+                        detailUrl: href,
+                        platform: 'taobao',
+                        salesText
+                    });
+                }
+
+            } catch (e) { }
+        }
+
+        return items;
+    }
+
     async parseProduct() {
         console.log('[Taobao] Starting Step-by-Step Parsing (V2 - No Mobile Bypass)...');
 

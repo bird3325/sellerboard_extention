@@ -61,7 +61,7 @@ function setupMessageListeners() {
                 return true;
 
             case 'collectSearchResults':
-                handleCollectSearchResults(sendResponse);
+                handleCollectSearchResults(message, sendResponse);
                 return true;
 
             case 'updateProgress':
@@ -236,19 +236,20 @@ function handleGetProductLinks(sendResponse) {
 /**
  * 검색 결과 수집 처리
  */
-function handleCollectSearchResults(sendResponse) {
+function handleCollectSearchResults(message, sendResponse) {
     (async () => {
         try {
             if (typeof parserManager === 'undefined') {
                 throw new Error('ParserManager not initialized');
             }
 
-            const results = await parserManager.collectSearchResults();
+            const filters = message.filters || {};
+            const results = await parserManager.collectSearchResults(filters);
 
             // 결과가 없으면 잠시 대기 후 재시도 (렌더링 딜레이 대응)
             if (!results || results.length === 0) {
                 await new Promise(r => setTimeout(r, 2000));
-                const retryResults = await parserManager.collectSearchResults();
+                const retryResults = await parserManager.collectSearchResults(filters);
                 sendResponse({ success: true, items: retryResults });
             } else {
                 sendResponse({ success: true, items: results });

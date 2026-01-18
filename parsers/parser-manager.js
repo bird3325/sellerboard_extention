@@ -111,13 +111,14 @@ class ParserManager {
 
     /**
      * 현재 페이지에서 검색 결과 수집
+     * @param {Object} filters - 필터링 옵션 (limit 등)
      * @returns {Promise<Array>} 검색 결과 리스트
      */
-    async collectSearchResults() {
+    async collectSearchResults(filters = {}) {
         await this.initialize();
         const platform = PlatformDetector.detect();
         const parser = this.getParser(platform);
-        return await parser.extractSearchResults();
+        return await parser.extractSearchResults(filters);
     }
 }
 

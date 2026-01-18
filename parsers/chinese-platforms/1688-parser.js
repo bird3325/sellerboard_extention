@@ -20,6 +20,85 @@ class China1688Parser extends BaseParser {
         };
     }
 
+    async extractSearchResults(filters = {}) {
+        // limit 적용
+        const limit = filters.limit || 1000;
+        const items = [];
+        const seenIds = new Set();
+
+        // 1688 Selectors
+        const selectors = [
+            '.sm-offer-item',
+            '.offer-list-row li',
+            '.common-offer-card',
+            '.waterfall-item'
+        ];
+
+        let cards = [];
+        for (const sel of selectors) {
+            const els = document.querySelectorAll(sel);
+            if (els.length > 0) {
+                cards = Array.from(els);
+                break;
+            }
+        }
+
+        for (const card of cards) {
+            if (items.length >= limit) break;
+            try {
+                // Link
+                const linkEl = card.querySelector('a[href*="detail.1688.com"]');
+                if (!linkEl) continue;
+
+                let href = linkEl.href;
+                if (!href) continue;
+
+                // ID extraction
+                const idMatch = href.match(/offer\/(\d+)\.html/);
+                const id = idMatch ? idMatch[1] : href;
+
+                if (seenIds.has(id)) continue;
+                seenIds.add(id);
+
+                // Title
+                const titleEl = card.querySelector('.title a, .title');
+                const name = titleEl ? titleEl.getAttribute('title') || titleEl.textContent.trim() : '';
+
+                // Price
+                const priceEl = card.querySelector('.price, .c-price');
+                let price = 0;
+                if (priceEl) {
+                    price = parseFloat(priceEl.textContent.replace(/[^0-9.]/g, '')) || 0;
+                }
+
+                // Image
+                const imgEl = card.querySelector('.img-container img, .main-img img');
+                let imageUrl = '';
+                if (imgEl) {
+                    imageUrl = imgEl.src || imgEl.dataset.src || '';
+                }
+
+                // Sales
+                const salesEl = card.querySelector('.month-sold, .sale-quantity');
+                const salesText = salesEl ? salesEl.textContent : '';
+
+                if (name) {
+                    items.push({
+                        id,
+                        name,
+                        price,
+                        imageUrl,
+                        detailUrl: href,
+                        platform: '1688',
+                        salesText
+                    });
+                }
+            } catch (e) { }
+        }
+
+        return items;
+    }
+
     async extractName() {
         await this.wait(1000);
 
