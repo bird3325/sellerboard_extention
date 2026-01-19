@@ -95,8 +95,79 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     sendResponse({ error: err.message });
                 });
             return true;
+
+        case 'SCRAPE_PRODUCT':
+            const url = message.payload ? message.payload.url : (message.url || message.data?.url);
+            handleScraping(url, sendResponse);
+            return true;
     }
 });
+
+/**
+ * 외부 메시지 리스너 (웹 -> 확장프로그램)
+ */
+chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => {
+    console.log('[ServiceWorker] Received message from Web:', request);
+    if (request.type === 'SCRAPE_PRODUCT' || request.action === 'SCRAPE_PRODUCT') {
+        const url = request.payload ? request.payload.url : request.url;
+        handleScraping(url, sendResponse);
+        return true; // 비동기 응답을 위해 true 반환
+    }
+
+    if (request.type === 'PING') {
+        sendResponse({ type: 'PONG' });
+    }
+});
+
+/**
+ * 스크래핑 핸들러
+ */
+async function handleScraping(url, sendResponse) {
+    try {
+        if (!url) {
+            sendResponse({ type: 'SOURCING_ERROR', error: 'No URL provided' });
+            return;
+        }
+
+        // 이미 해당 URL이 열려있는지 확인하거나, 현재 활성 탭을 사용
+        let targetTab = null;
+
+        // 전략: 웹에서 이미 window.open으로 페이지를 열었다면, 그 탭을 찾아서 활용
+        // 정확한 매칭을 위해 쿼리 스트링 등 고려 (url + "*")
+        const tabs = await chrome.tabs.query({ url: url + "*" });
+
+        if (tabs && tabs.length > 0) {
+            targetTab = tabs[0];
+            console.log('[ServiceWorker] 기존 탭 발견:', targetTab.id);
+            // 탭이 로딩 완료될 때까지 대기하지 않고 바로 시도
+        } else {
+            console.log('[ServiceWorker] 새 탭 생성:', url);
+            // 탭이 없으면 새로 생성 (백그라운드에서 실행 시)
+            targetTab = await chrome.tabs.create({ url: url, active: false });
+            // 로딩 대기
+            await new Promise(resolve => {
+                const listener = (tabId, info) => {
+                    if (tabId === targetTab.id && info.status === 'complete') {
+                        chrome.tabs.onUpdated.removeListener(listener);
+                        resolve();
+                    }
+                };
+                chrome.tabs.onUpdated.addListener(listener);
+            });
+        }
+
+        // 3. Content Script로 수집 명령 전송
+        // 직접 sendMessage 대신 sendMessageToTabWithRetry 사용하여 연결 안정성 확보
+        const response = await sendMessageToTabWithRetry(targetTab.id, { action: "EXT_SCRAPE_NOW" });
+
+        console.log("[ServiceWorker] Scraped Data:", response);
+        sendResponse({ type: 'SOURCING_COMPLETE', payload: response });
+
+    } catch (e) {
+        console.error("[ServiceWorker] Scraping failed:", e);
+        sendResponse({ type: 'SOURCING_ERROR', error: e.toString() });
+    }
+}
 
 /**
  * 소싱 요청 처리 (Web App -> Extension)
@@ -562,13 +633,22 @@ function waitForTabLoad(tabId, timeout = 10000) {
 async function sendMessageToTabWithRetry(tabId, message, retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
+            // 탭 존재 여부 확인 (불필요한 에러 방지)
+            const tab = await chrome.tabs.get(tabId).catch(() => null);
+            if (!tab) throw new Error(`No tab with id: ${tabId}`);
+
             // 1. 메시지 전송 시도
             return await chrome.tabs.sendMessage(tabId, message);
         } catch (error) {
             // 2. 연결 실패 시 스크립트 주입 시도 (첫 번째 실패 시에만)
+            // 탭이 닫힌 경우(No tab with id)는 주입 시도하지 않음
             if (i === 0 && error.message.includes('Could not establish connection')) {
 
                 try {
+                    // 탭이 여전히 존재하는지 재확인
+                    const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+                    if (!currentTab) throw new Error(`Tab ${tabId} closed before injection`);
+
                     // manifest.json의 content_scripts와 동일한 순서로 모든 파일 주입
                     await chrome.scripting.executeScript({
                         target: { tabId: tabId },
@@ -588,10 +668,12 @@ async function sendMessageToTabWithRetry(tabId, message, retries = 3) {
                         ]
                     });
 
-                    await delay(1000); // 스크립트 초기화 대기 (늘림)
+                    await delay(1000); // 스크립트 초기화 대기
                     continue; // 재시도
                 } catch (scriptError) {
                     console.error('[ServiceWorker] 스크립트 주입 실패:', scriptError);
+                    // 탭이 없으면 즉시 중단
+                    if (scriptError.message.includes('No tab')) throw scriptError;
                 }
             }
 

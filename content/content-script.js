@@ -4,6 +4,25 @@
 
 
 
+// 1. [Relay] 웹 페이지(Dashboard)에서 오는 메시지를 받아 Background로 전달 (Connection Error 해결책)
+window.addEventListener("message", (event) => {
+    // 보안: 신뢰할 수 있는 소스인지 확인 (여기서는 단순히 소스 태그 체크)
+    if (event.data?.source === 'SELLERBOARD_WEB' && (event.data?.type === 'SCRAPE_PRODUCT' || event.data?.type === 'SCRAPE_PRODUCT_RELAY')) {
+        console.log("[Content] Relaying SCRAPE_PRODUCT to Background:", event.data.payload);
+
+        // Background로 전달 (내부 메시징이므로 externally_connectable 불필요)
+        // 기존 컨벤션(action)과 새 컨벤션(type) 모두 호환되도록 전송
+        chrome.runtime.sendMessage({
+            action: 'SCRAPE_PRODUCT',
+            type: 'SCRAPE_PRODUCT',
+            payload: event.data.payload
+        }, (response) => {
+            console.log("[Content] Background Response:", response);
+            // 필요시 웹 페이지로 다시 응답을 돌려줄 수 있음
+        });
+    }
+});
+
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initContentScript);
 } else {
@@ -77,6 +96,11 @@ function setupMessageListeners() {
                     if (toggle) toggle.checked = false;
                     window.sellerboardWidget.updateStats();
                 }
+                break;
+
+            case "EXT_SCRAPE_NOW":
+                const data = scrapePage();
+                sendResponse(data);
                 break;
         }
     });
@@ -301,4 +325,31 @@ if (document.body) {
         subtree: true,
         childList: true
     });
+}
+
+function scrapePage() {
+    // 1. 기본 정보 추출 (범용 선택자)
+    const title = document.querySelector('h1')?.innerText || document.title;
+
+    // 2. 이미지 추출 (og:image 또는 대표 이미지)
+    let images = [];
+    const ogImage = document.querySelector('meta[property="og:image"]')?.content;
+    if (ogImage) images.push(ogImage);
+
+    document.querySelectorAll('img').forEach(img => {
+        if (img.width > 200 && img.height > 200) images.push(img.src);
+    });
+    images = [...new Set(images)].slice(0, 5); // 중복제거 & 상위 5개
+    // 3. 가격 (옵션별 최저가 등)
+    // 사이트별 커스텀 로직이 필요할 수 있음 (알리, 타오바오 등)
+
+    // 기존 ParserManager가 있다면 활용 시도 (선택적)
+    // if (typeof parserManager !== 'undefined') { ... }
+
+    return {
+        title: title,
+        images: images,
+        description: document.body.innerText.substring(0, 200), // 간략 설명
+        url: window.location.href
+    };
 }
