@@ -156,12 +156,65 @@ async function handleScraping(url, sendResponse) {
             });
         }
 
-        // 3. Content Script로 수집 명령 전송
+        // 3. Command Content Script로 수집 명령 전송
         // 직접 sendMessage 대신 sendMessageToTabWithRetry 사용하여 연결 안정성 확보
         const response = await sendMessageToTabWithRetry(targetTab.id, { action: "EXT_SCRAPE_NOW" });
 
         console.log("[ServiceWorker] Scraped Data:", response);
-        sendResponse({ type: 'SOURCING_COMPLETE', payload: response });
+
+        // [AUTO SAVE] 상품 수집 시 즉시 DB 저장 (User Request)
+        // Manual collection Logic과 동일하게 처리 (User Request: "참조해서 수정")
+        let saveResult = { saved: false, error: null };
+
+        if (response && !response.error) {
+            try {
+                // Ensure default collection_type if not present
+                if (!response.collection_type) response.collection_type = 'auto_trigger';
+
+                // handleSaveProduct 로직을 참조하여 간소화
+                // (세션 체크는 saveProduct 내부에서 validateSession 호출로 처리됨)
+                const client = await initializeSupabase();
+                const savedData = await client.saveProduct(response);
+
+                console.log("[ServiceWorker] Auto saved product to DB:", response.name);
+
+                // 성공 처리
+                saveResult.saved = true;
+                if (savedData && savedData.product_id) {
+                    saveResult.productId = savedData.product_id;
+                }
+
+                // 성공 알림 (handleSaveProduct와 동일)
+                chrome.notifications.create({
+                    type: 'basic',
+                    iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
+                    title: '상품 자동 수집 완료',
+                    message: `${response.name}이(가) 저장되었습니다.`,
+                    silent: true
+                });
+
+            } catch (saveErr) {
+                console.error("[ServiceWorker] Failed to auto-save to DB:", saveErr);
+                saveResult.error = saveErr.message || saveErr.toString();
+
+                // 실패 알림
+                chrome.notifications.create({
+                    type: 'basic',
+                    iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
+                    title: '자동 저장 실패',
+                    message: `저장 중 오류가 발생했습니다: ${saveResult.error}`,
+                    silent: true
+                });
+            }
+        }
+
+        // 결과에 저장 상태 포함
+        const finalPayload = {
+            ...response,
+            autoSave: saveResult
+        };
+
+        sendResponse({ type: 'SOURCING_COMPLETE', payload: finalPayload });
 
     } catch (e) {
         console.error("[ServiceWorker] Scraping failed:", e);

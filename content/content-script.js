@@ -99,9 +99,19 @@ function setupMessageListeners() {
                 break;
 
             case "EXT_SCRAPE_NOW":
-                const data = scrapePage();
-                sendResponse(data);
-                break;
+                (async () => {
+                    try {
+                        if (typeof parserManager === 'undefined') {
+                            throw new Error('ParserManager not initialized');
+                        }
+                        const data = await parserManager.parseCurrentPage();
+                        sendResponse(data);
+                    } catch (e) {
+                        console.error("Auto Scrape Error:", e);
+                        sendResponse({ error: e.message });
+                    }
+                })();
+                return true; // Async response
         }
     });
 }
