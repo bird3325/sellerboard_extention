@@ -169,7 +169,7 @@ async function handleScraping(url, sendResponse) {
         if (response && !response.error) {
             try {
                 // Ensure default collection_type if not present
-                if (!response.collection_type) response.collection_type = 'auto_trigger';
+                if (!response.collection_type) response.collection_type = '워크플로우 수집상품';
 
                 // handleSaveProduct 로직을 참조하여 간소화
                 // (세션 체크는 saveProduct 내부에서 validateSession 호출로 처리됨)
@@ -205,6 +205,16 @@ async function handleScraping(url, sendResponse) {
                     message: `저장 중 오류가 발생했습니다: ${saveResult.error}`,
                     silent: true
                 });
+            }
+
+            // [Auto Close] 수집 완료 후 탭 닫기
+            try {
+                if (targetTab && targetTab.id) {
+                    await chrome.tabs.remove(targetTab.id);
+                    console.log('[ServiceWorker] 수집 완료 후 탭 닫기 성공:', targetTab.id);
+                }
+            } catch (closeErr) {
+                console.warn('[ServiceWorker] 탭 닫기 실패 (이미 닫혔거나 오류):', closeErr);
             }
         }
 

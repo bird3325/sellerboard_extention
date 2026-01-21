@@ -1219,7 +1219,54 @@ class AliexpressParser extends BaseParser {
     async parseProduct() {
         // 페이지 완전 로딩 대기
         await this.wait(2000);
+
+        // [Validation] 한국 발송 상품 체크
+        if (this.checkShippedFromKorea()) {
+            // 특수 에러 메시지로 처리 (ServiceWorker나 Web App에서 이 메시지를 식별하여 'Skipped' 처리 가능)
+            throw new Error('[AutoSkip] 한국 발송 상품은 수집 제외됩니다.');
+        }
+
         return await super.parseProduct();
+    }
+
+    /**
+     * 한국 발송 상품 여부 확인
+     * @returns {boolean}
+     */
+    checkShippedFromKorea() {
+        try {
+            // 1. Dynamic Shipping Container
+            const shippingEl = document.querySelector('.dynamic-shipping, .product-shipping-info');
+            if (shippingEl) {
+                const text = shippingEl.textContent;
+                if (text.includes('한국에서 발송') || text.includes('Shipped from Korea') || text.includes('From Korea')) {
+                    console.log('[AliexpressParser] 한국 발송 상품 감지 (Dynamic Shipping)');
+                    return true;
+                }
+            }
+
+            // 2. General Text Search in Body (Top Section)
+            // 배송 정보가 보통 상단에 있으므로 전체를 뒤지기보다 상단 중심으로
+            const upperBody = document.body.innerText.substring(0, 5000);
+            // "한국에서 발송" 문구가 명확하게 있는지 확인
+            if (upperBody.includes('한국에서 발송') || upperBody.includes('Shipped from Korea')) {
+                // 문맥 확인 (다른 상품 추천일 수도 있으니 주의해야 함. 하지만 보통 상단에 뜨는 건 본품 배송정보)
+                // 좀 더 구체적인 클래스 내에서 체크하는 것이 안전
+            }
+
+            // 배송지 정보가 있는 특정 요소들 재확인
+            const logisticsEls = document.querySelectorAll('[class*="logistics"], [class*="shipping"]');
+            for (const el of logisticsEls) {
+                if (el.textContent.includes('한국에서 발송') || el.textContent.includes('Shipped from Korea')) {
+                    console.log('[AliexpressParser] 한국 발송 상품 감지 (Class Search)');
+                    return true;
+                }
+            }
+
+        } catch (e) {
+            console.warn('[AliexpressParser] Check ShippedFromKorea failed:', e);
+        }
+        return false;
     }
     async scrollToBottom() {
         return new Promise((resolve) => {
