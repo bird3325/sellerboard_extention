@@ -55,4 +55,24 @@ window.addEventListener('message', async (event) => {
             }, '*');
         }
     }
+
+    else if (type === 'SYNC_SESSION') {
+        try {
+            console.log('[SellerBoard Bridge] 세션 동기화 요청 수신');
+
+            // Background Script로 세션 전달
+            const result = await chrome.runtime.sendMessage({
+                action: 'SYNC_SESSION',
+                sessionData: payload
+            });
+
+            window.postMessage({
+                type: 'SYNC_SESSION_COMPLETE',
+                source: 'SELLERBOARD_EXT',
+                success: result.success
+            }, '*');
+        } catch (err) {
+            console.error('[SellerBoard Bridge] 세션 동기화 오류:', err);
+        }
+    }
 });

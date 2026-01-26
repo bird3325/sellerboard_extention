@@ -100,8 +100,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             const url = message.payload ? message.payload.url : (message.url || message.data?.url);
             handleScraping(url, sendResponse);
             return true;
+
+        case 'SYNC_SESSION':
+            handleSyncSession(message.sessionData, sendResponse);
+            return true;
     }
 });
+
+/**
+ * 외부 세션 동기화 핸들러
+ */
+async function handleSyncSession(sessionData, sendResponse) {
+    try {
+        const client = await initializeSupabase();
+        const result = await client.setSession(sessionData);
+        sendResponse(result);
+    } catch (error) {
+        console.error('[ServiceWorker] Session sync failed:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
 
 /**
  * 외부 메시지 리스너 (웹 -> 확장프로그램)
