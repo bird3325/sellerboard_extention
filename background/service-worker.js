@@ -237,9 +237,14 @@ async function handleScraping(url, sendResponse) {
         // 결과에 저장 상태 포함
         const finalPayload = {
             ...response,
-            autoSave: saveResult
+            autoSave: saveResult,
+            // 웹 대시보드 로그용 메시지 추가
+            logMessage: saveResult.saved
+                ? `[수집완료] ${response.name || '상품'}`
+                : (saveResult.skipped ? `[제외] ${saveResult.error}` : `[저장실패] ${saveResult.error || '알 수 없는 오류'}`)
         };
 
+        console.log('[ServiceWorker] Sending SOURCING_COMPLETE with log:', finalPayload.logMessage);
         sendResponse({ type: 'SOURCING_COMPLETE', payload: finalPayload });
 
     } catch (e) {
