@@ -168,31 +168,47 @@ async function handleScraping(url, sendResponse) {
 
         if (response && !response.error) {
             try {
-                // Ensure default collection_type if not present
-                if (!response.collection_type) response.collection_type = '워크플로우 수집상품';
+                if (response.skipped) {
+                    console.log('[ServiceWorker] 상품 수집이 제외되었습니다:', response.reason);
+                    saveResult.skipped = true;
+                    saveResult.error = response.reason;
+                    // 알림 (선택적)
+                    /*
+                    chrome.notifications.create({
+                        type: 'basic',
+                        iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
+                        title: '수집 제외',
+                        message: response.reason || '수집이 제외된 상품입니다.',
+                        silent: true
+                    });
+                    */
+                } else {
+                    // Ensure default collection_type if not present
+                    if (!response.collection_type) response.collection_type = '워크플로우 수집상품';
 
-                // handleSaveProduct 로직을 참조하여 간소화
-                // (세션 체크는 saveProduct 내부에서 validateSession 호출로 처리됨)
-                const client = await initializeSupabase();
-                const savedData = await client.saveProduct(response);
+                    // handleSaveProduct 로직을 참조하여 간소화
+                    // (세션 체크는 saveProduct 내부에서 validateSession 호출로 처리됨)
+                    const client = await initializeSupabase();
+                    const savedData = await client.saveProduct(response);
 
-                console.log("[ServiceWorker] Auto saved product to DB:", response.name);
+                    console.log("[ServiceWorker] Auto saved product to DB:", response.name);
 
-                // 성공 처리
-                saveResult.saved = true;
-                if (savedData && savedData.product_id) {
-                    saveResult.productId = savedData.product_id;
+                    // 성공 처리
+                    saveResult.saved = true;
+                    if (savedData && savedData.product_id) {
+                        saveResult.productId = savedData.product_id;
+                    }
+
+                    // 성공 알림 (handleSaveProduct와 동일)
+                    chrome.notifications.create({
+                        type: 'basic',
+                        iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
+                        title: '상품 자동 수집 완료',
+                        message: `${response.name}이(가) 저장되었습니다.`,
+                        silent: true
+                    });
+
                 }
-
-                // 성공 알림 (handleSaveProduct와 동일)
-                chrome.notifications.create({
-                    type: 'basic',
-                    iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
-                    title: '상품 자동 수집 완료',
-                    message: `${response.name}이(가) 저장되었습니다.`,
-                    silent: true
-                });
-
             } catch (saveErr) {
                 console.error("[ServiceWorker] Failed to auto-save to DB:", saveErr);
                 saveResult.error = saveErr.message || saveErr.toString();
@@ -489,18 +505,18 @@ async function handleBatchCollect(message, sendResponse) {
         const session = client.getSession();
         if (!session || !session.profile || session.profile.transmission_limit <= 0) {
             const msg = '전송 한도가 초과되었습니다. 수집을 진행할 수 없습니다.';
-
+ 
             // Progress 창에 에러 표시 (메시지 전송)
             // TODO: Progress 창에서 이 메시지를 처리할 수 있어야 함. 
             // 현재는 간단히 알림만 띄우고 종료
-
+ 
             chrome.notifications.create({
                 type: 'basic',
                 iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
                 title: '수집 실패',
                 message: msg
             });
-
+ 
             sendResponse({ success: false, error: msg });
             return;
         }

@@ -189,6 +189,13 @@ function handleCollectProduct(collectionType, sendResponse) {
                 return;
             }
 
+            if (productData.skipped) {
+                console.log('상품 수집이 제외되었습니다:', productData.reason);
+                showErrorModal('수집 제외', productData.reason || '수집이 제외된 상품입니다.');
+                sendResponse({ success: false, skipped: true, error: productData.reason });
+                return;
+            }
+
             // Service Worker로 데이터 전송하여 저장
             const saveResponse = await chrome.runtime.sendMessage({
                 action: 'saveProduct',

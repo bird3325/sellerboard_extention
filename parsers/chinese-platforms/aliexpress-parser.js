@@ -1222,8 +1222,12 @@ class AliexpressParser extends BaseParser {
 
         // [Validation] 한국 발송 상품 체크
         if (this.checkShippedFromKorea()) {
-            // 특수 에러 메시지로 처리 (ServiceWorker나 Web App에서 이 메시지를 식별하여 'Skipped' 처리 가능)
-            throw new Error('[AutoSkip] 한국 발송 상품은 수집 제외됩니다.');
+            console.log('[AliexpressParser] 한국 발송 상품이므로 수집을 건너뜁니다.');
+            return {
+                skipped: true,
+                reason: '[AutoSkip] 한국 발송 상품은 수집 제외됩니다.',
+                name: 'Skipped Product' // 최소한의 필드 유지
+            };
         }
 
         return await super.parseProduct();
