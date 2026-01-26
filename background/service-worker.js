@@ -161,7 +161,7 @@ async function handleScraping(url, sendResponse) {
         } else {
             console.log('[ServiceWorker] 새 탭 생성:', url);
             // 탭이 없으면 새로 생성 (백그라운드에서 실행 시)
-            targetTab = await chrome.tabs.create({ url: url, active: false });
+            targetTab = await safeTabOperation(() => chrome.tabs.create({ url: url, active: false }));
             // 로딩 대기
             await new Promise(resolve => {
                 const listener = (tabId, info) => {
@@ -244,7 +244,7 @@ async function handleScraping(url, sendResponse) {
             // [Auto Close] 수집 완료 후 탭 닫기
             try {
                 if (targetTab && targetTab.id) {
-                    await chrome.tabs.remove(targetTab.id);
+                    await safeTabOperation(() => chrome.tabs.remove(targetTab.id));
                     console.log('[ServiceWorker] 수집 완료 후 탭 닫기 성공:', targetTab.id);
                 }
             } catch (closeErr) {
@@ -333,7 +333,7 @@ async function performSourcing({ keyword, platform, sourcing_workflows }) {
         }
 
         // 3. 새 탭 열기 (활성화 상태로)
-        const tab = await chrome.tabs.create({ url: searchUrl, active: true });
+        const tab = await safeTabOperation(() => chrome.tabs.create({ url: searchUrl, active: true }));
         tabId = tab.id;
 
         // 4. 페이지 로딩 대기
@@ -392,13 +392,13 @@ async function performSourcing({ keyword, platform, sourcing_workflows }) {
         }
 
         // 7. 탭 닫기
-        await chrome.tabs.remove(tabId);
+        await safeTabOperation(() => chrome.tabs.remove(tabId));
 
         return limitedItems;
 
     } catch (error) {
         console.error('[ServiceWorker] performSourcing 에러:', error);
-        if (tabId) try { await chrome.tabs.remove(tabId); } catch (e) { } // 에러 시에도 탭 정리
+        if (tabId) try { await safeTabOperation(() => chrome.tabs.remove(tabId)); } catch (e) { } // 에러 시에도 탭 정리
         throw error;
     }
 }
@@ -623,7 +623,7 @@ async function handleBatchCollect(message, sendResponse) {
                 }).catch(() => { }); // 팝업이 닫혀있을 수 있음
 
                 // 탭 활성화 및 로딩 대기
-                await chrome.tabs.update(tab.id, { active: true });
+                await safeTabOperation(() => chrome.tabs.update(tab.id, { active: true }));
 
 
                 // 탭이 완전히 로드될 때까지 대기 (최대 10초)
@@ -822,4 +822,23 @@ function detectPlatform(url) {
     if (lowUrl.includes('11st.co.kr')) return '11st';
 
     return 'generic';
+}
+
+/**
+ * 안전한 탭 작업 (드래그 중 에러 등 방지)
+ */
+async function safeTabOperation(operation, retries = 5, delayMs = 500) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await operation();
+        } catch (error) {
+            const isEditError = error.message && error.message.includes('Tabs cannot be edited');
+            if (isEditError && i < retries - 1) {
+                console.warn(`[ServiceWorker] Tab editing blocked, retrying in ${delayMs}ms... (Attempt ${i + 1}/${retries})`);
+                await delay(delayMs);
+                continue;
+            }
+            throw error;
+        }
+    }
 }
