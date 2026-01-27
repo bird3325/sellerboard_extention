@@ -344,15 +344,18 @@ class AliexpressParser extends BaseParser {
         return items;
     }
 
-    async extractName() {
+    async extractTitle() {
         // 동적 로딩 대기
         await this.wait(1000);
 
+        // [FIX] 수정보강 내용: 다양한 타이틀 선택자 및 폴백 추가
         const selectors = [
             'h1[data-pl="product-title"]',
             '.product-title-text',
             'h1.product-title',
-            '.title--wrap--Ms9Zv4A h1'
+            '.title--wrap--Ms9Zv4A h1',
+            '[class*="title--wrap"] h1',
+            'h1'
         ];
 
         for (const selector of selectors) {
@@ -360,6 +363,15 @@ class AliexpressParser extends BaseParser {
             if (element && element.textContent.trim()) {
                 return element.textContent.trim();
             }
+        }
+
+        // Meta tag Fallback
+        const ogTitle = document.querySelector('meta[property="og:title"]');
+        if (ogTitle && ogTitle.content) return ogTitle.content;
+
+        const titleTag = document.querySelector('title');
+        if (titleTag) {
+            return titleTag.innerText.split('|')[0].trim();
         }
 
         return 'Product name not found';
@@ -376,43 +388,40 @@ class AliexpressParser extends BaseParser {
             '.product-price-value',
             '[class*="price--current"]',
             '.uniform-banner-box-price',
-            '.sku-price'
+            '.sku-price',
+            '[class*="price--main"]',  // New layout
+            '[class*="current-price"]' // Generic
         ];
 
         // Helper to parse price from text strictly
         const parsePrice = (text) => {
             if (!text) return 0;
-
             // 1. Strict Regex: Look for Currency Symbol followed by Number
-            // e.g. "US $244.01", "₩ 10,000", "$50.5"
-            // Handles comma and dot correctly
             const currencyRegex = /(?:US\s*\$|USD|₩|KRW|\$|€|£|¥)\s*([\d,.]+)/i;
             const match = text.match(currencyRegex);
             if (match) {
+                // Remove commas and handle weird formatting if any
                 const numStr = match[1].replace(/,/g, '');
-                return parseFloat(numStr) || 0;
+                // Check if it's a valid float
+                const val = parseFloat(numStr);
+                return isNaN(val) ? 0 : val;
             }
-
             // 2. Trailing Currency Regex (e.g. "1000원")
-            // Strict check to ensure no bare numbers are accepted
             const trailingRegex = /([\d,.]+)\s*(?:원|won|KRW)/i;
             const matchTrailing = text.match(trailingRegex);
             if (matchTrailing) {
                 const numStr = matchTrailing[1].replace(/,/g, '');
-                return parseFloat(numStr) || 0;
+                const val = parseFloat(numStr);
+                return isNaN(val) ? 0 : val;
             }
-
-            // 3. REJECT bare numbers if no currency symbol found
-            // This prevents "5%" from being parsed as "5"
             return 0;
         };
 
         for (const sel of specificSelectors) {
             const els = document.querySelectorAll(sel);
             for (const el of els) {
-                // Ignore if class indicates discount
-                if (el.className.includes('discount') || el.className.includes('original')) continue;
-
+                // Ignore if class indicates discount/original/del
+                if (el.className.includes('discount') || el.className.includes('original') || el.className.includes('del')) continue;
                 const txt = el.textContent.trim();
                 const price = parsePrice(txt);
                 if (price > 0) return price;
@@ -422,16 +431,24 @@ class AliexpressParser extends BaseParser {
         // 2. Fallback: Search in Price-looking elements generally (stricter than before)
         const fallbackEls = document.querySelectorAll('[class*="price"]');
         for (const el of fallbackEls) {
-            // Skip known bad classes
             if (el.className.includes('discount') || el.className.includes('del') || el.className.includes('original')) continue;
-
             const txt = el.textContent.trim();
             const price = parsePrice(txt);
             if (price > 0) return price;
         }
 
-        // 3. Fallback to generic text search via BaseParser (usually meta tags)
-        return await super.extractPrice();
+        // 3. Fallback: Meta tags (og:price:amount, product:price:amount)
+        const metaPrice = document.querySelector('meta[property="og:price:amount"], meta[property="product:price:amount"]');
+        if (metaPrice && metaPrice.content) {
+            return parseFloat(metaPrice.content) || 0;
+        }
+
+        // 4. Fallback to generic text search via BaseParser (usually meta tags)
+        // If BaseParser fails, we try a final aggressive text walker on the top section
+        const basePrice = await super.extractPrice();
+        if (basePrice > 0) return basePrice;
+
+        return 0;
     }
 
     async extractOptions() {
@@ -646,153 +663,283 @@ class AliexpressParser extends BaseParser {
     }
 
     async extractDescription() {
+        // [FIX] 수정보강 내용: 재귀적 Shadow DOM 탐색 및 Iframe Fallback 완벽 지원
+        console.log('[AliexpressParser] 상세 설명 추출 시작 (Recursive Shadow DOM)');
 
-        const d = { text: '', html: '', images: [] };
-
-        try {
-            const expandSelectors = ['button[class*="expand"]', 'button[class*="more"]', 'div[class*="expand"]', '.view-more-btn', '#product-description-expand'];
-            const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
-            const textExpanders = buttons.filter(b => {
-                const t = b.textContent.trim().toLowerCase();
-                return t === 'view more' || t === 'show more' || t === '더보기' || t === '펼치기' || t.includes('description');
-            });
-            const allExpanders = [...document.querySelectorAll(expandSelectors.join(',')), ...textExpanders];
-
-            for (const btn of allExpanders) {
-                if (btn && btn.offsetParent !== null) {
-                    try {
-                        btn.click();
-                        await new Promise(r => setTimeout(r, 500));
-                    } catch (e) { }
-                }
-            }
-
-            let descEl = null;
-
-            let shadowRoots = [];
-            const mainContainer = document.querySelector('.pdp-body') || document.querySelector('#root') || document.body;
-            const walker = document.createTreeWalker(mainContainer, NodeFilter.SHOW_ELEMENT);
+        // 1. 재귀적 Shadow Root 수집 헬퍼 함수
+        const collectAllShadowRoots = (root, roots = new Set()) => {
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
             let currentNode = walker.currentNode;
             while (currentNode) {
-                if (currentNode.shadowRoot) shadowRoots.push(currentNode.shadowRoot);
+                if (currentNode.shadowRoot) {
+                    if (!roots.has(currentNode.shadowRoot)) {
+                        roots.add(currentNode.shadowRoot);
+                        // 재귀 호출: 발견된 Shadow Root 내부도 탐색
+                        collectAllShadowRoots(currentNode.shadowRoot, roots);
+                    }
+                }
                 currentNode = walker.nextNode();
             }
+            return roots; // Set 반환
+        };
 
-            for (const root of shadowRoots) {
+        // 2. 하단 스크롤 (지연 로딩 트리거)
+        await this.scrollToBottom();
+        await this.wait(1000);
+
+        // 3. 상세 설명 앵커로 스크롤
+        const descSelectors = [
+            '#product-description',
+            '.product-description',
+            '.detail-desc-decorate-richtext',
+            '[name="description"]'
+        ];
+
+        let anchorEl = null;
+        for (const sel of descSelectors) {
+            const el = document.querySelector(sel);
+            if (el) {
+                console.log('[AliexpressParser] 위치 기준 요소 발견, 스크롤 이동:', sel);
+                el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                await this.wait(1500);
+                anchorEl = el;
+                break;
+            }
+        }
+
+        const d = { text: '', html: '', images: [] };
+        let descEl = null;
+
+        try {
+            // 4. 재귀적 Shadow DOM 탐색 (가장 강력한 방법)
+            console.log('[AliexpressParser] 재귀적 Shadow DOM 탐색 시작');
+            const mainContainer = document.querySelector('.pdp-body') || document.querySelector('#root') || document.body;
+
+            // 모든 Shadow Root 수집 (중첩된 것 포함)
+            const allRootsSet = collectAllShadowRoots(mainContainer);
+
+            // document.querySelectorAll('*') 방식도 병행하여 놓친 것 추가
+            document.querySelectorAll('*').forEach(el => {
+                if (el.shadowRoot && !allRootsSet.has(el.shadowRoot)) {
+                    allRootsSet.add(el.shadowRoot);
+                    collectAllShadowRoots(el.shadowRoot, allRootsSet);
+                }
+            });
+
+            const allRoots = Array.from(allRootsSet);
+            console.log(`[AliexpressParser] 발견된 총 Shadow Root: ${allRoots.length}개`);
+
+            // Shadow Root 순회하며 설명 요소 찾기
+            for (let i = 0; i < allRoots.length; i++) {
+                const root = allRoots[i];
+
+                // 타겟 클래스/ID 검색
                 const target = root.querySelector('.detail-desc-decorate-richtext, .detailmodule_html, #product-description, [name="description"]');
                 if (target && target.textContent.trim().length > 50) {
+                    console.log(`[AliexpressParser] Shadow Root #${i}에서 설명 요소 확정 (.detail-desc-decorate-richtext 등)`);
                     descEl = target;
                     break;
                 }
-                const divs = root.querySelectorAll('div, p, span');
-                let bestTextDiv = null;
-                let maxLen = 0;
-                for (const div of divs) {
-                    const len = div.textContent.trim().length;
-                    if (len > 200 && len > maxLen && div.children.length < 20) {
-                        maxLen = len;
-                        bestTextDiv = div;
-                    }
-                }
-                if (bestTextDiv) {
-                    descEl = bestTextDiv;
-                    break;
-                }
+
+                // 이미지 많은 div 검색
                 const imgs = root.querySelectorAll('img');
-                if (imgs.length > 3) {
-                    descEl = root.querySelector('div') || root;
-                    break;
-                }
-            }
-
-            if (!descEl) {
-                const candidates = document.querySelectorAll('h2, h3, h4, div, span, p, strong');
-                for (const el of candidates) {
-                    const t = el.textContent.trim();
-                    if (t === '개요' || t === 'Overview') {
-                        let parent = el.parentElement;
-                        let headerRow = null;
-                        for (let i = 0; i < 4; i++) {
-                            if (!parent) break;
-                            const parentText = parent.textContent;
-                            if (parentText.includes('신고하기') || parentText.includes('Report')) {
-                                headerRow = parent;
-                                break;
-                            }
-                            parent = parent.parentElement;
-                        }
-                        if (headerRow) {
-                            let next = headerRow.nextElementSibling;
-                            if (next) {
-                                descEl = next;
-                                break;
-                            }
-                        }
+                if (imgs.length > 5) {
+                    // 이미지가 많으면 상세설명일 확률 높음 (보수적 접근)
+                    // 텍스트 길이도 어느정도 되면 채택
+                    if (root.textContent.length > 200) {
+                        console.log(`[AliexpressParser] Shadow Root #${i}에서 설명 추정 요소 발견 (이미지 ${imgs.length}개)`);
+                        descEl = root.querySelector('div') || root;
+                        break;
                     }
                 }
             }
 
+            // 5. Iframe 탐색 (Shadow DOM에서 못 찾은 경우)
             if (!descEl) {
-                const divs = document.querySelectorAll('div');
-                for (const div of divs) {
-                    if (div.textContent.trim().startsWith('설명') && div.textContent.length > 100) {
-                        descEl = div;
-                    }
-                }
-            }
+                console.log('[AliexpressParser] Shadow DOM 실패, Iframe 탐색 시도');
 
-            if (!descEl) {
-                const headers = document.querySelectorAll('h2, h3, h4, .title, .section-title');
-                for (const h of headers) {
-                    const t = h.textContent.trim();
-                    if (t === '개요' || t === '설명' || t === 'Description' || t === 'Overview' || t.includes('Product Description')) {
-                        let next = h.nextElementSibling;
-                        if (next && next.tagName === 'DIV') {
-                            descEl = next;
-                            break;
-                        }
-                        const parentContent = h.closest('div[class*="container"], div[class*="wrap"]');
-                        if (parentContent) {
-                            descEl = parentContent.nextElementSibling || parentContent;
+                // 5-1. 메인 문서 Iframe
+                let targetIframe = document.querySelector('iframe[class*="extend--iframe"]') || document.querySelector('iframe[src*="detail-desc"]');
+
+                // 5-2. [NEW] Shadow Root 내부 Iframe 탐색
+                if (!targetIframe && allRoots.length > 0) {
+                    for (const root of allRoots) {
+                        const shadowIframe = root.querySelector('iframe');
+                        if (shadowIframe && (shadowIframe.src.includes('detail-desc') || shadowIframe.classList.contains('extend--iframe'))) {
+                            targetIframe = shadowIframe;
+                            console.log('[AliexpressParser] Shadow Root 내부에서 설명 Iframe 발견');
                             break;
                         }
                     }
                 }
-            }
 
-            if (descEl) {
-                const iframe = descEl.querySelector('iframe') || (descEl.tagName === 'IFRAME' ? descEl : null);
-                if (iframe) {
-                    if (!iframe.contentDocument && iframe.src) {
-                        await new Promise(resolve => setTimeout(resolve, 1500));
+                if (!targetIframe && anchorEl) {
+                    // 앵커 바로 다음 형제 요소 탐색 (User Screenshot 구조)
+                    // #product-description -> iframe.extend--iframe--...
+                    let next = anchorEl.nextElementSibling;
+                    // 중간에 텍스트 노드나 주석이 있을 수 있으므로 몇 번 더 탐색
+                    for (let k = 0; k < 3; k++) {
+                        if (!next) break;
+                        if (next.tagName === 'IFRAME') {
+                            targetIframe = next;
+                            console.log('[AliexpressParser] 앵커(#product-description) 인접 Iframe 발견');
+                            break;
+                        }
+                        // div wrapper 안에 있을 수도 있음
+                        const innerIframe = next.querySelector('iframe');
+                        if (innerIframe) {
+                            targetIframe = innerIframe;
+                            console.log('[AliexpressParser] 앵커(#product-description) 인접 요소 내부 Iframe 발견');
+                            break;
+                        }
+                        next = next.nextElementSibling;
                     }
+                }
+
+                if (targetIframe) {
+                    console.log('[AliexpressParser] 설명 Iframe 발견:', targetIframe.src);
                     try {
-                        const doc = iframe.contentDocument || iframe.contentWindow?.document;
-                        if (doc && doc.body) {
+                        const doc = targetIframe.contentDocument || targetIframe.contentWindow?.document;
+                        if (doc && doc.body && doc.body.textContent.length > 50) {
                             descEl = doc.body;
-                        } else if (iframe.src && iframe.src.startsWith('http')) {
-                            const response = await fetch(iframe.src);
+                        }
+                    } catch (e) { /* CORS */ }
+
+                    if (!descEl && targetIframe.src && targetIframe.src.startsWith('http')) {
+                        try {
+                            const response = await fetch(targetIframe.src);
                             if (response.ok) {
                                 const text = await response.text();
-                                if (text && text.length > 100) {
-                                    const parser = new DOMParser();
-                                    const doc = parser.parseFromString(text, 'text/html');
-                                    if (doc.body) descEl = doc.body;
-                                }
+                                const parser = new DOMParser();
+                                const doc = parser.parseFromString(text, 'text/html');
+                                if (doc.body) descEl = doc.body;
                             }
+                        } catch (e) {
+                            console.error('[AliexpressParser] Fetch Error:', e);
                         }
-                    } catch (e) { }
+                    }
                 }
             }
 
+            // 6. [NEW] 소스 코드 정규식 및 스크립트 변수 탐색 (강력함)
+            if (!descEl) {
+                console.log('[AliexpressParser] Iframe 실패, 스크립트/Regex 정밀 탐색 시도');
+                try {
+                    const html = document.documentElement.outerHTML;
+
+                    // 패턴 1: descriptionUrl (JSON, RunParams) - 따옴표 및 공백 유연화
+                    const descUrlPatterns = [
+                        /descriptionUrl"?\s*[:=]\s*["'](https?:\/\/[^"']+)["']/i,
+                        /detailDesc"?\s*[:=]\s*["'](https?:\/\/[^"']+)["']/i,
+                        /productDescUrl"?\s*[:=]\s*["'](https?:\/\/[^"']+)["']/i,
+                        // 일반적인 desc.htm 링크 탐색 (키 없이 URL만 있을 경우)
+                        /["'](https?:\/\/[^"']*\/product\/description\/[^"']+)["']/i,
+                        // [BRUTE FORCE] 파일명 기반 탐색 (alicdn 포함된 html/htm 파일)
+                        /["'](https?:\/\/[^"']*alicdn[^"']*\.(?:html|htm)[^"']*)["']/i
+                    ];
+
+                    let descUrl = null;
+
+                    // 1. HTML 소스 전체에서 검색
+                    for (const pattern of descUrlPatterns) {
+                        const match = html.match(pattern);
+                        if (match && match[1]) {
+                            // 제외 필터: 통계나 트래킹 URL 제외
+                            if (!match[1].includes('stat') && !match[1].includes('log')) {
+                                descUrl = match[1];
+                                console.log('[AliexpressParser] HTML 소스에서 URL 발견:', descUrl);
+                                break;
+                            }
+                        }
+                    }
+
+                    // 2. 스크립트 태그 내부 정밀 검색 (HTML match로 놓친 경우)
+                    if (!descUrl) {
+                        const scripts = document.querySelectorAll('script');
+                        for (const script of scripts) {
+                            const content = script.textContent;
+                            if (!content || content.length < 50) continue;
+
+                            for (const pattern of descUrlPatterns) {
+                                const match = content.match(pattern);
+                                if (match && match[1]) {
+                                    // 제외 필터
+                                    if (!match[1].includes('stat') && !match[1].includes('log')) {
+                                        descUrl = match[1];
+                                        console.log('[AliexpressParser] 스크립트 태그에서 URL 발견:', descUrl);
+                                        break;
+                                    }
+                                }
+                            }
+                            if (descUrl) break;
+                        }
+                    }
+
+                    if (descUrl) {
+                        console.log('[AliexpressParser] Description URL Fetch 시도:', descUrl);
+                        try {
+                            const response = await fetch(descUrl);
+                            if (response.ok) {
+                                let text = await response.text();
+
+                                // JSONP 또는 JS 변수 할당 형태인 경우 처리
+                                if (text.trim().startsWith('var') || text.trim().startsWith('window') || text.includes('(')) {
+                                    // 괄호나 따옴표 안의 내용만 추출 시도
+                                    const strMatch = text.match(/["'](.*)["']/s); // s flag for dotAll
+                                    if (strMatch) text = strMatch[1];
+                                }
+
+                                const parser = new DOMParser();
+                                const doc = parser.parseFromString(text, 'text/html');
+                                if (doc.body && doc.body.textContent.length > 20) {
+                                    descEl = doc.body;
+                                    console.log('[AliexpressParser] Fetch 및 파싱 성공');
+                                }
+                            }
+                        } catch (err) {
+                            console.error('[AliexpressParser] Description Fetch 실패:', err);
+                        }
+                    }
+                } catch (e) {
+                    console.error('[AliexpressParser] Regex 탐색 오류:', e);
+                }
+            }
+
+            // 7. 일반 DOM 검색 (정말 최후의 수단)
+            if (!descEl) {
+                console.log('[AliexpressParser] 일반 DOM 탐색');
+                const simpleTarget = document.querySelector('.detail-desc-decorate-richtext, .detailmodule_html');
+                if (simpleTarget) descEl = simpleTarget;
+            }
+
+            // 7. 데이터 추출
             if (descEl) {
+                console.log('[AliexpressParser] 추출 대상 확정, 데이터 파싱 중...');
+
                 if (!d.text) d.text = descEl.textContent.trim().substring(0, 5000);
                 d.html = descEl.innerHTML;
+
+                const imgs = descEl.querySelectorAll('img');
+                imgs.forEach(img => {
+                    const src = img.src || img.dataset.src;
+                    if (src && !src.includes('data:image')) {
+                        let finalSrc = src;
+                        if (src.includes('alicdn.com')) {
+                            finalSrc = src.replace(/(_\d+x\d+)\.(jpg|png|webp).*/i, '').replace(/\.(jpg|png|webp)_.*/i, '.$1');
+                        }
+                        d.images.push(finalSrc);
+                    }
+                });
+                d.images = [...new Set(d.images)].slice(0, 20);
+                console.log(`[AliexpressParser] 완료: 텍스트 ${d.text.length}자, 이미지 ${d.images.length}개`);
+            } else {
+                console.warn('[AliexpressParser] 상세 설명을 찾지 못했습니다.');
             }
 
         } catch (e) {
-
+            console.error('[AliexpressParser] 로직 실행 중 오류:', e);
         }
+
         return d;
     }
 

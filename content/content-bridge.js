@@ -72,7 +72,19 @@ window.addEventListener('message', async (event) => {
                 success: result.success
             }, '*');
         } catch (err) {
-            console.error('[SellerBoard Bridge] 세션 동기화 오류:', err);
+            const errorMessage = err.message || '';
+            // Quietly handle invalidation or log other errors
+            if (!errorMessage.includes('Extension context invalidated')) {
+                console.error('[SellerBoard Bridge] 세션 동기화 오류:', err);
+            }
+
+            // 웹 앱에 실패 응답 전송
+            window.postMessage({
+                type: 'SYNC_SESSION_COMPLETE',
+                source: 'SELLERBOARD_EXT',
+                success: false,
+                error: 'EXTENSION_INVALIDATED'
+            }, '*');
         }
     }
 });

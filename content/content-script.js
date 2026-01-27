@@ -12,10 +12,16 @@ window.addEventListener("message", (event) => {
 
         // Background로 전달 (내부 메시징이므로 externally_connectable 불필요)
         // 기존 컨벤션(action)과 새 컨벤션(type) 모두 호환되도록 전송
+        const payload = event.data.payload || {};
+        // 웹에서 온 요청은 기본적으로 'work'로 처리
+        if (!payload.collection_type) {
+            payload.collection_type = 'work';
+        }
+
         chrome.runtime.sendMessage({
             action: 'SCRAPE_PRODUCT',
             type: 'SCRAPE_PRODUCT',
-            payload: event.data.payload
+            payload: payload
         }, (response) => {
             console.log("[Content] Background Response:", response);
             // 필요시 웹 페이지로 다시 응답을 돌려줄 수 있음
@@ -99,19 +105,41 @@ function setupMessageListeners() {
                 break;
 
             case "EXT_SCRAPE_NOW":
+                // [ASYNC RESPONSE] 즉시 응답하여 타임아웃 방지
+                sendResponse({ status: 'started' });
+
                 (async () => {
                     try {
-                        if (typeof parserManager === 'undefined') {
-                            throw new Error('ParserManager not initialized');
+                        const data = await executeScraping();
+
+                        // [SKIPPED] 수집 제외 처리
+                        if (data.skipped) {
+                            console.log('[Content] 상품 수집이 제외되었습니다:', data.reason);
+                            chrome.runtime.sendMessage({
+                                action: 'AUTO_SCRAPE_DONE',
+                                data: data
+                            });
+                            return;
                         }
-                        const data = await parserManager.parseCurrentPage();
-                        sendResponse(data);
+
+                        console.log("[Content] Verified Description Length:", data.description ? data.description.length : 0);
+
+                        // [ASYNC COMPLETION] 수집 완료 메시지 전송
+                        chrome.runtime.sendMessage({
+                            action: 'AUTO_SCRAPE_DONE',
+                            data: data
+                        });
                     } catch (e) {
+
                         console.error("Auto Scrape Error:", e);
-                        sendResponse({ error: e.message });
+                        // [ASYNC ERROR] 에러 메시지 전송
+                        chrome.runtime.sendMessage({
+                            action: 'AUTO_SCRAPE_ERROR',
+                            error: e.message
+                        });
                     }
                 })();
-                return true; // Async response
+                return true; // Keep channel open (optional due to immediate response, but good for safety)
         }
     });
 }
@@ -171,23 +199,30 @@ function showErrorModal(title, message) {
 }
 
 /**
- * 상품 수집 처리
+ * 상품 수집 처리 (공통 로직)
+ */
+async function executeScraping() {
+    if (typeof parserManager === 'undefined') {
+        throw new Error('ParserManager not initialized');
+    }
+
+    const data = await parserManager.parseCurrentPage();
+
+    // [VALIDATION] 상품 정보 유효성 검사
+    if (!data.name && !data.price) {
+        throw new Error('상품 정보를 찾을 수 없습니다. (Name/Price missing)');
+    }
+
+    return data;
+}
+
+/**
+ * 상품 수집 처리 (수동 버튼)
  */
 function handleCollectProduct(collectionType, sendResponse) {
     (async () => {
         try {
-            if (typeof parserManager === 'undefined') {
-                throw new Error('ParserManager not initialized');
-            }
-
-            const productData = await parserManager.parseCurrentPage();
-
-            if (!productData.name && !productData.price) {
-                console.error('상품 정보 없음');
-                showErrorModal('수집 실패', '상품 정보를 찾을 수 없습니다.');
-                sendResponse({ success: false, error: '상품 정보를 찾을 수 없습니다.' });
-                return;
-            }
+            const productData = await executeScraping();
 
             if (productData.skipped) {
                 console.log('상품 수집이 제외되었습니다:', productData.reason);
@@ -208,13 +243,8 @@ function handleCollectProduct(collectionType, sendResponse) {
             if (saveResponse && saveResponse.success) {
                 sendResponse({ success: true, message: '상품이 성공적으로 저장되었습니다.' });
             } else {
-                // 에러 모달 표시 (수집 불가 메시지 등)
                 const errorMsg = saveResponse?.error || '저장 실패';
-
-                // [수집 불가] prefix가 있는 경우만 모달을 띄우거나, 전체 에러에 대해 띄울 수 있음.
-                // 사용자 요청 컨텍스트상 '차단' 케이스가 중요하므로 모든 에러를 모달로 처리
                 showErrorModal('수집 실패', errorMsg);
-
                 sendResponse({ success: false, error: errorMsg });
             }
         } catch (error) {

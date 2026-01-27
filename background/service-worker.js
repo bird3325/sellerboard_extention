@@ -9,6 +9,10 @@ import { SupabaseClient } from '../lib/supabase-client.js';
 // Supabase 클라이언트 인스턴스
 let supabaseClient = null;
 
+// [ASYNC SCRAPING] 진행 중인 스크래핑 요청을 추적하기 위한 Map
+// Key: tabId, Value: { resolve, reject, timer }
+const pendingScrapes = new Map();
+
 async function initializeSupabase() {
     if (supabaseClient) return supabaseClient;
 
@@ -98,11 +102,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'SCRAPE_PRODUCT':
             const url = message.payload ? message.payload.url : (message.url || message.data?.url);
-            handleScraping(url, sendResponse);
+            const collectionType = message.payload?.collection_type || message.collection_type || 'single'; // Default to single (Direct Collection)
+            handleScraping(url, sendResponse, collectionType);
             return true;
 
         case 'SYNC_SESSION':
             handleSyncSession(message.sessionData, sendResponse);
+            return true;
+
+        // [ASYNC SCRAPING] 수집 완료 메시지 처리
+        case 'AUTO_SCRAPE_DONE':
+            handleAutoScrapeDone(message, sender, sendResponse);
+            return true;
+
+        // [ASYNC SCRAPING] 수집 에러 메시지 처리
+        case 'AUTO_SCRAPE_ERROR':
+            handleAutoScrapeError(message, sender, sendResponse);
             return true;
     }
 });
@@ -128,7 +143,8 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
     console.log('[ServiceWorker] Received message from Web:', request);
     if (request.type === 'SCRAPE_PRODUCT' || request.action === 'SCRAPE_PRODUCT') {
         const url = request.payload ? request.payload.url : request.url;
-        handleScraping(url, sendResponse);
+        const collectionType = request.payload?.collection_type || request.collection_type || 'work'; // Default to work (Workflow)
+        handleScraping(url, sendResponse, collectionType);
         return true; // 비동기 응답을 위해 true 반환
     }
 
@@ -140,7 +156,11 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
 /**
  * 스크래핑 핸들러
  */
-async function handleScraping(url, sendResponse) {
+/**
+ * 스크래핑 핸들러 (Async Modified)
+ */
+async function handleScraping(url, sendResponse, collectionType = 'single') {
+    console.log(`[ServiceWorker] handleScraping called with URL: ${url}, Type: ${collectionType}`);
     try {
         if (!url) {
             sendResponse({ type: 'SOURCING_ERROR', error: 'No URL provided' });
@@ -149,126 +169,166 @@ async function handleScraping(url, sendResponse) {
 
         // 이미 해당 URL이 열려있는지 확인하거나, 현재 활성 탭을 사용
         let targetTab = null;
+        let createdNewTab = false;
 
         // 전략: 웹에서 이미 window.open으로 페이지를 열었다면, 그 탭을 찾아서 활용
-        // 정확한 매칭을 위해 쿼리 스트링 등 고려 (url + "*")
         const tabs = await chrome.tabs.query({ url: url + "*" });
 
         if (tabs && tabs.length > 0) {
             targetTab = tabs[0];
             console.log('[ServiceWorker] 기존 탭 발견:', targetTab.id);
-            // 탭이 로딩 완료될 때까지 대기하지 않고 바로 시도
+            // 탭 활성화 (수집을 위해)
+            await chrome.tabs.update(targetTab.id, { active: true });
         } else {
             console.log('[ServiceWorker] 새 탭 생성:', url);
-            // 탭이 없으면 새로 생성 (백그라운드에서 실행 시)
-            targetTab = await safeTabOperation(() => chrome.tabs.create({ url: url, active: false }));
+            targetTab = await safeTabOperation(() => chrome.tabs.create({ url: url, active: true }));
+            createdNewTab = true;
+
             // 로딩 대기
-            await new Promise(resolve => {
-                const listener = (tabId, info) => {
-                    if (tabId === targetTab.id && info.status === 'complete') {
-                        chrome.tabs.onUpdated.removeListener(listener);
-                        resolve();
-                    }
-                };
-                chrome.tabs.onUpdated.addListener(listener);
-            });
+            await waitForTabLoad(targetTab.id);
         }
 
-        // 3. Command Content Script로 수집 명령 전송
-        // 직접 sendMessage 대신 sendMessageToTabWithRetry 사용하여 연결 안정성 확보
-        const response = await sendMessageToTabWithRetry(targetTab.id, { action: "EXT_SCRAPE_NOW" });
+        // 안정화 대기
+        console.log('[ServiceWorker] 페이지 안정화 대기 (3000ms)...');
+        await delay(3000);
 
-        console.log("[ServiceWorker] Scraped Data:", response);
+        // [ASYNC CHANGE] 1. 수집 시작 명령 전송 (즉시 응답 기대)
+        console.log('[ServiceWorker] 수집 시작 명령 전송 (EXT_SCRAPE_NOW)');
+        const startResponse = await sendMessageToTabWithRetry(targetTab.id, { action: "EXT_SCRAPE_NOW" });
 
-        // [AUTO SAVE] 상품 수집 시 즉시 DB 저장 (User Request)
-        // Manual collection Logic과 동일하게 처리 (User Request: "참조해서 수정")
-        let saveResult = { saved: false, error: null };
-
-        if (response && !response.error) {
-            try {
-                if (response.skipped) {
-                    console.log('[ServiceWorker] 상품 수집이 제외되었습니다:', response.reason);
-                    saveResult.skipped = true;
-                    saveResult.error = response.reason;
-                    // 알림 (선택적)
-                    /*
-                    chrome.notifications.create({
-                        type: 'basic',
-                        iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
-                        title: '수집 제외',
-                        message: response.reason || '수집이 제외된 상품입니다.',
-                        silent: true
-                    });
-                    */
-                } else {
-                    // Ensure default collection_type if not present
-                    if (!response.collection_type) response.collection_type = '워크플로우 수집상품';
-
-                    // handleSaveProduct 로직을 참조하여 간소화
-                    // (세션 체크는 saveProduct 내부에서 validateSession 호출로 처리됨)
-                    const client = await initializeSupabase();
-                    const savedData = await client.saveProduct(response);
-
-                    console.log("[ServiceWorker] Auto saved product to DB:", response.name);
-
-                    // 성공 처리
-                    saveResult.saved = true;
-                    if (savedData && savedData.product_id) {
-                        saveResult.productId = savedData.product_id;
-                    }
-
-                    // 성공 알림 (handleSaveProduct와 동일)
-                    chrome.notifications.create({
-                        type: 'basic',
-                        iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
-                        title: '상품 자동 수집 완료',
-                        message: `${response.name}이(가) 저장되었습니다.`,
-                        silent: true
-                    });
-
-                }
-            } catch (saveErr) {
-                console.error("[ServiceWorker] Failed to auto-save to DB:", saveErr);
-                saveResult.error = saveErr.message || saveErr.toString();
-
-                // 실패 알림
-                chrome.notifications.create({
-                    type: 'basic',
-                    iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
-                    title: '자동 저장 실패',
-                    message: `저장 중 오류가 발생했습니다: ${saveResult.error}`,
-                    silent: true
-                });
+        // 시작 응답 확인
+        if (!startResponse || startResponse.status !== 'started') {
+            // 기존 동기식 응답이 왔을 경우 (하위 호환)
+            if (startResponse && (startResponse.name || startResponse.title)) {
+                console.log('[ServiceWorker] 동기식 응답 수신 (레거시 동작)');
+                await processScrapedData(startResponse, targetTab, collectionType, createdNewTab);
+                sendResponse({ type: 'SOURCING_COMPLETE', payload: { ...startResponse, logMessage: '[수집완료] (Sync)' } });
+                return;
             }
-
-            // [Auto Close] 수집 완료 후 탭 닫기
-            try {
-                if (targetTab && targetTab.id) {
-                    await safeTabOperation(() => chrome.tabs.remove(targetTab.id));
-                    console.log('[ServiceWorker] 수집 완료 후 탭 닫기 성공:', targetTab.id);
-                }
-            } catch (closeErr) {
-                console.warn('[ServiceWorker] 탭 닫기 실패 (이미 닫혔거나 오류):', closeErr);
-            }
+            throw new Error('수집 시작 응답이 올바르지 않습니다.');
         }
 
-        // 결과에 저장 상태 포함
-        const finalPayload = {
-            ...response,
-            autoSave: saveResult,
-            // 웹 대시보드 로그용 메시지 추가
-            logMessage: saveResult.saved
-                ? `[수집완료] ${response.name || '상품'}`
-                : (saveResult.skipped ? `[제외] ${saveResult.error}` : `[저장실패] ${saveResult.error || '알 수 없는 오류'}`)
-        };
+        console.log('[ServiceWorker] 수집 작업 시작됨. 완료 메시지 대기 중...');
 
-        console.log('[ServiceWorker] Sending SOURCING_COMPLETE with log:', finalPayload.logMessage);
+        // [ASYNC CHANGE] 2. 완료 메시지 대기 (Promise 생성)
+        const scrapeResult = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                pendingScrapes.delete(targetTab.id);
+                reject(new Error('Timeout: 수집 시간이 너무 오래 걸립니다 (60초 초과).'));
+            }, 60000); // 60초 타임아웃
+
+            pendingScrapes.set(targetTab.id, { resolve, reject, timer });
+        });
+
+        console.log("[ServiceWorker] Async Scraped Data Received:", scrapeResult.name);
+
+        // 3. 데이터 처리 및 저장
+        const finalPayload = await processScrapedData(scrapeResult, targetTab, collectionType, createdNewTab);
+
+        console.log('[ServiceWorker] Sending SOURCING_COMPLETE to Web App');
         sendResponse({ type: 'SOURCING_COMPLETE', payload: finalPayload });
 
     } catch (e) {
-        console.error("[ServiceWorker] Scraping failed:", e);
+        console.error("[ServiceWorker] Scraping request failed:", e);
         sendResponse({ type: 'SOURCING_ERROR', error: e.toString() });
     }
+}
+
+/**
+ * [ASYNC] 수집 완료 핸들러
+ */
+function handleAutoScrapeDone(message, sender, sendResponse) {
+    const tabId = sender.tab ? sender.tab.id : message.tabId;
+    if (!tabId || !pendingScrapes.has(tabId)) {
+        console.warn('[ServiceWorker] 알 수 없는 탭에서의 완료 메시지:', tabId);
+        return;
+    }
+
+    const { resolve, timer } = pendingScrapes.get(tabId);
+    clearTimeout(timer);
+    pendingScrapes.delete(tabId);
+
+    resolve(message.data);
+    sendResponse({ received: true });
+}
+
+/**
+ * [ASYNC] 수집 에러 핸들러
+ */
+function handleAutoScrapeError(message, sender, sendResponse) {
+    const tabId = sender.tab ? sender.tab.id : message.tabId;
+    if (!tabId || !pendingScrapes.has(tabId)) {
+        return;
+    }
+
+    const { reject, timer } = pendingScrapes.get(tabId);
+    clearTimeout(timer);
+    pendingScrapes.delete(tabId);
+
+    reject(new Error(message.error || 'Unknown error from content script'));
+    sendResponse({ received: true });
+}
+
+/**
+ * 수집 데이터 처리 및 DB 저장 (공통 로직 분리)
+ */
+async function processScrapedData(data, targetTab, collectionType, shouldCloseTab) {
+    let saveResult = { saved: false, error: null };
+
+    // [AUTO SAVE]
+    try {
+        if (data.skipped) {
+            console.log('[ServiceWorker] 수집 제외:', data.reason);
+            saveResult.skipped = true;
+            saveResult.error = data.reason;
+        } else {
+            // Update collection_type
+            if (!data.collection_type) data.collection_type = collectionType;
+
+            const client = await initializeSupabase();
+            const savedData = await client.saveProduct(data);
+
+            console.log("[ServiceWorker] Auto saved:", data.name);
+            saveResult.saved = true;
+            if (savedData && savedData.product_id) {
+                saveResult.productId = savedData.product_id;
+            }
+
+            chrome.notifications.create({
+                type: 'basic',
+                iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
+                title: '자동 수집 완료',
+                message: `${data.name} 저장됨`,
+                silent: true
+            });
+        }
+    } catch (saveErr) {
+        console.error("[ServiceWorker] DB Save Failed:", saveErr);
+        saveResult.error = saveErr.message;
+
+        chrome.notifications.create({
+            type: 'basic',
+            iconUrl: chrome.runtime.getURL('assets/icons/icon48.png'),
+            title: '저장 실패',
+            message: `오류: ${saveResult.error}`,
+            silent: true
+        });
+    }
+
+    // 탭 닫기 (새로 만든 탭인 경우만)
+    if (shouldCloseTab && targetTab && targetTab.id) {
+        try {
+            await safeTabOperation(() => chrome.tabs.remove(targetTab.id));
+        } catch (e) { }
+    }
+
+    return {
+        ...data,
+        autoSave: saveResult,
+        logMessage: saveResult.saved
+            ? `[수집완료] ${data.name}`
+            : (saveResult.skipped ? `[제외] ${saveResult.error}` : `[저장실패] ${saveResult.error}`)
+    };
 }
 
 /**
@@ -373,7 +433,8 @@ async function performSourcing({ keyword, platform, sourcing_workflows }) {
             platform: platform,
             rating: item.rating || 0,
             salesVolume: item.salesText || item.salesVolume || '',
-            reviewCount: item.reviewCount || 0
+            reviewCount: item.reviewCount || 0,
+            collection_type: 'keyword'
         }));
 
         console.log(`[ServiceWorker] 최종 저장할 아이템 수: ${limitedItems.length}`);
