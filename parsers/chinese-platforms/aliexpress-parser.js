@@ -733,20 +733,25 @@ class AliexpressParser extends BaseParser {
             for (let i = 0; i < allRoots.length; i++) {
                 const root = allRoots[i];
 
-                // 타겟 클래스/ID 검색
+                // [FIX] Detect by class or ID + Check for Images (User Screenshot case)
                 const target = root.querySelector('.detail-desc-decorate-richtext, .detailmodule_html, #product-description, [name="description"]');
-                if (target && target.textContent.trim().length > 50) {
-                    console.log(`[AliexpressParser] Shadow Root #${i}에서 설명 요소 확정 (.detail-desc-decorate-richtext 등)`);
-                    descEl = target;
-                    break;
+                if (target) {
+                    const hasMuchText = target.textContent.trim().length > 50;
+                    const hasImages = target.querySelector('img') !== null;
+
+                    if (hasMuchText || hasImages) {
+                        console.log(`[AliexpressParser] Shadow Root #${i}에서 설명 요소 확정 (${hasMuchText ? '텍스트형' : '이미지형'})`);
+                        descEl = target;
+                        break;
+                    }
                 }
 
-                // 이미지 많은 div 검색
+                // 이미지 많은 div 검색 (Fallback)
                 const imgs = root.querySelectorAll('img');
                 if (imgs.length > 5) {
                     // 이미지가 많으면 상세설명일 확률 높음 (보수적 접근)
-                    // 텍스트 길이도 어느정도 되면 채택
-                    if (root.textContent.length > 200) {
+                    // 텍스트 길이도 어느정도 되거나 이미지가 8개 이상이면 채택
+                    if (root.textContent.length > 200 || imgs.length > 8) {
                         console.log(`[AliexpressParser] Shadow Root #${i}에서 설명 추정 요소 발견 (이미지 ${imgs.length}개)`);
                         descEl = root.querySelector('div') || root;
                         break;
@@ -908,8 +913,12 @@ class AliexpressParser extends BaseParser {
             // 7. 일반 DOM 검색 (정말 최후의 수단)
             if (!descEl) {
                 console.log('[AliexpressParser] 일반 DOM 탐색');
-                const simpleTarget = document.querySelector('.detail-desc-decorate-richtext, .detailmodule_html');
-                if (simpleTarget) descEl = simpleTarget;
+                const simpleTarget = document.querySelector('.detail-desc-decorate-richtext, .detailmodule_html, #product-description');
+                if (simpleTarget) {
+                    if (simpleTarget.textContent.trim().length > 20 || simpleTarget.querySelector('img')) {
+                        descEl = simpleTarget;
+                    }
+                }
             }
 
             // 7. 데이터 추출
