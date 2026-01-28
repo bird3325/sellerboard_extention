@@ -526,7 +526,33 @@ class AliexpressParser extends BaseParser {
 
         if (skuProps.length === 0) return opts;
 
-        const priceSelector = '[class*="price-tr--current"], [class*="price-current"], span[class*="price"]';
+        const priceSelector = [
+            '[class*="price-kr--current"]',
+            '.price--currentPriceText--V8_y_b5',
+            '.product-price-value',
+            '[class*="price--current"]',
+            '.uniform-banner-box-price',
+            '.sku-price',
+            '[class*="price--main"]',
+            '[class*="price-tr--current"]',
+            'span[class*="price"]'
+        ].join(', ');
+
+        // Helper to parse price strictly (Reusable logic)
+        const parseSkuPrice = (text) => {
+            if (!text) return 0;
+            // 1. Prefix Currency
+            const prefixMatch = text.match(/(?:US\s*\$|USD|₩|KRW|\$|€|£|¥)\s*([\d,.]+)/i);
+            if (prefixMatch) {
+                return parseFloat(prefixMatch[1].replace(/,/g, '')) || 0;
+            }
+            // 2. Suffix Currency (Korean style)
+            const suffixMatch = text.match(/([\d,.]+)\s*(?:원|won|KRW)/i);
+            if (suffixMatch) {
+                return parseFloat(suffixMatch[1].replace(/,/g, '')) || 0;
+            }
+            return 0;
+        };
 
         for (const prop of skuProps) {
             const titleEl = prop.querySelector('[class*="sku-item--title"], [class*="sku-title"], [class*="property-title"]');
@@ -575,13 +601,18 @@ class AliexpressParser extends BaseParser {
                                 await new Promise(resolve => setTimeout(resolve, 600));
                             }
 
-                            const priceEl = document.querySelector(priceSelector);
-                            if (priceEl) {
-                                priceText = priceEl.textContent.trim();
-                                // STRICT CURRENCY CHECK also here
-                                const priceMatch = priceText.match(/(?:US\s*\$|USD|₩|KRW|\$|€|£|¥)\s*([\d,]+\.?\d*)/i);
-                                if (priceMatch) {
-                                    price = parseFloat(priceMatch[1].replace(/,/g, ''));
+                            // Try multiple selectors
+                            const priceEls = document.querySelectorAll(priceSelector);
+                            for (const pEl of priceEls) {
+                                // Skip discount/original prices to get current price
+                                if (pEl.className.includes('discount') || pEl.className.includes('del') || pEl.className.includes('original')) continue;
+
+                                const txt = pEl.textContent.trim();
+                                const parsed = parseSkuPrice(txt);
+                                if (parsed > 0) {
+                                    price = parsed;
+                                    priceText = txt;
+                                    break;
                                 }
                             }
 
