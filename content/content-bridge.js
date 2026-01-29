@@ -87,4 +87,32 @@ window.addEventListener('message', async (event) => {
             }, '*');
         }
     }
+
+    else if (type === 'SCRAPE_PRODUCT' || type === 'SCRAPE_PRODUCT_RELAY' || type === 'DETAIL_SCRAPING_REQ') {
+        try {
+            console.log('[SellerBoard Bridge] 상세 수집 요청 수신:', payload);
+            const url = payload?.url || payload;
+
+            const response = await chrome.runtime.sendMessage({
+                action: 'SCRAPE_PRODUCT',
+                type: 'SCRAPE_PRODUCT',
+                payload: { url }
+            });
+
+            // 웹 앱으로 결과 전달 (extensionBridge.ts가 기대하는 형식)
+            window.postMessage({
+                type: response?.type || 'SOURCING_COMPLETE',
+                source: 'SELLERBOARD_EXT',
+                payload: response?.payload || response,
+                error: response?.error
+            }, '*');
+        } catch (err) {
+            console.error('[SellerBoard Bridge] 상세 수집 요청 오류:', err);
+            window.postMessage({
+                type: 'SOURCING_ERROR',
+                source: 'SELLERBOARD_EXT',
+                error: err.message
+            }, '*');
+        }
+    }
 });

@@ -50,7 +50,19 @@ chrome.runtime.onStartup.addListener(async () => {
 initializeSupabase();
 
 // 버전 확인용 로그
-console.log('[ServiceWorker] SellerBoard v2.1.1 Loaded (Active Check Enhanced)');
+console.log('[ServiceWorker] SellerBoard v2.1.2 Loaded (Timeout Extended)');
+
+/**
+ * 탭 닫힘 감지 (진행 중인 스크래핑 정리)
+ */
+chrome.tabs.onRemoved.addListener((tabId) => {
+    if (pendingScrapes.has(tabId)) {
+        const { reject, timer } = pendingScrapes.get(tabId);
+        clearTimeout(timer);
+        pendingScrapes.delete(tabId);
+        reject(new Error('사용자가 탭을 닫아서 수집을 중단했습니다.'));
+    }
+});
 
 /**
  * 메시지 리스너
@@ -160,47 +172,56 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
  * 스크래핑 핸들러 (Async Modified)
  */
 async function handleScraping(url, sendResponse, collectionType = 'single') {
-    console.log(`[ServiceWorker] handleScraping called with URL: ${url}, Type: ${collectionType}`);
+    console.log(`[ServiceWorker] handleScraping START | URL: ${url} | Type: ${collectionType}`);
     try {
         if (!url) {
+            console.error('[ServiceWorker] No URL provided to handleScraping');
             sendResponse({ type: 'SOURCING_ERROR', error: 'No URL provided' });
             return;
         }
 
-        // 이미 해당 URL이 열려있는지 확인하거나, 현재 활성 탭을 사용
-        let targetTab = null;
-        let createdNewTab = false;
-
-        // 전략: 웹에서 이미 window.open으로 페이지를 열었다면, 그 탭을 찾아서 활용
-        const tabs = await chrome.tabs.query({ url: url + "*" });
-
-        if (tabs && tabs.length > 0) {
-            targetTab = tabs[0];
-            console.log('[ServiceWorker] 기존 탭 발견:', targetTab.id);
-            // 탭 활성화 (수집을 위해)
-            await chrome.tabs.update(targetTab.id, { active: true });
-        } else {
-            console.log('[ServiceWorker] 새 탭 생성:', url);
-            targetTab = await safeTabOperation(() => chrome.tabs.create({ url: url, active: true }));
-            createdNewTab = true;
-
-            // 로딩 대기
-            await waitForTabLoad(targetTab.id);
+        // Ensure URL has a scheme
+        if (url.startsWith('//')) {
+            url = 'https:' + url;
+        } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = 'https://' + url;
         }
 
+        let targetTab = null;
+        let createdNewTab = true; // [Change] Force new tab for reliability in automation
+
+        console.log('[ServiceWorker] Creating new tab for:', url);
+        targetTab = await safeTabOperation(() => chrome.tabs.create({ url: url, active: true }));
+
+        if (!targetTab) {
+            throw new Error('Failed to create target tab');
+        }
+
+        // Ensure window is focused (important for some sites to load scripts)
+        try {
+            await chrome.windows.update(targetTab.windowId, { focused: true });
+        } catch (winErr) {
+            console.warn('[ServiceWorker] Window focus failed:', winErr);
+        }
+
+        // 로딩 대기
+        console.log(`[ServiceWorker] Waiting for tab ${targetTab.id} to load...`);
+        await waitForTabLoad(targetTab.id);
+
         // 안정화 대기
-        console.log('[ServiceWorker] 페이지 안정화 대기 (3000ms)...');
+        console.log('[ServiceWorker] Page stabilization delay (3000ms)...');
         await delay(3000);
 
         // [ASYNC CHANGE] 1. 수집 시작 명령 전송 (즉시 응답 기대)
-        console.log('[ServiceWorker] 수집 시작 명령 전송 (EXT_SCRAPE_NOW)');
+        console.log(`[ServiceWorker] Sending EXT_SCRAPE_NOW to tab ${targetTab.id}`);
         const startResponse = await sendMessageToTabWithRetry(targetTab.id, { action: "EXT_SCRAPE_NOW" });
 
         // 시작 응답 확인
         if (!startResponse || startResponse.status !== 'started') {
+            console.log('[ServiceWorker] Unexpected start response:', startResponse);
             // 기존 동기식 응답이 왔을 경우 (하위 호환)
             if (startResponse && (startResponse.name || startResponse.title)) {
-                console.log('[ServiceWorker] 동기식 응답 수신 (레거시 동작)');
+                console.log('[ServiceWorker] Received legacy sync response');
                 await processScrapedData(startResponse, targetTab, collectionType, createdNewTab);
                 sendResponse({ type: 'SOURCING_COMPLETE', payload: { ...startResponse, logMessage: '[수집완료] (Sync)' } });
                 return;
@@ -208,16 +229,19 @@ async function handleScraping(url, sendResponse, collectionType = 'single') {
             throw new Error('수집 시작 응답이 올바르지 않습니다.');
         }
 
-        console.log('[ServiceWorker] 수집 작업 시작됨. 완료 메시지 대기 중...');
+        console.log(`[ServiceWorker] Scrape started on tab ${targetTab.id}. Waiting for async completion...`);
 
         // [ASYNC CHANGE] 2. 완료 메시지 대기 (Promise 생성)
         const scrapeResult = await new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
-                pendingScrapes.delete(targetTab.id);
-                reject(new Error('Timeout: 수집 시간이 너무 오래 걸립니다 (180초 초과).'));
-            }, 180000); // 180초 타임아웃
+                if (pendingScrapes.has(targetTab.id)) {
+                    console.error(`[ServiceWorker] Timeout (300s) reached for tab ${targetTab.id}`);
+                    pendingScrapes.delete(targetTab.id);
+                    reject(new Error('Timeout: 수집 시간이 너무 오래 걸립니다 (300초 초과).'));
+                }
+            }, 300000); // 300초 타임아웃 (5분)
 
-            pendingScrapes.set(targetTab.id, { resolve, reject, timer });
+            pendingScrapes.set(targetTab.id, { resolve, reject, timer, url });
         });
 
         console.log("[ServiceWorker] Async Scraped Data Received:", scrapeResult.name);
@@ -229,7 +253,16 @@ async function handleScraping(url, sendResponse, collectionType = 'single') {
         sendResponse({ type: 'SOURCING_COMPLETE', payload: finalPayload });
 
     } catch (e) {
-        console.error("[ServiceWorker] Scraping request failed:", e);
+        console.error("[ServiceWorker] handleScraping FAILED:", e);
+
+        // 탭 닫기 (새로 만든 탭이고 에러가 난 경우에도 정리)
+        if (createdNewTab && targetTab && targetTab.id) {
+            try {
+                console.log(`[ServiceWorker] Cleaning up orphaned tab ${targetTab.id} after error`);
+                await safeTabOperation(() => chrome.tabs.remove(targetTab.id));
+            } catch (closeErr) { }
+        }
+
         sendResponse({ type: 'SOURCING_ERROR', error: e.toString() });
     }
 }

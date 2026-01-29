@@ -587,6 +587,13 @@ class AliexpressParser extends BaseParser {
                     const value = item.getAttribute('data-sku-col') || item.getAttribute('data-sku-id') || text;
                     const wasSelected = item.className.includes('selected');
 
+                    // Skip disabled/unavailable items if possible
+                    const isDisabled = item.classList.contains('disabled') || item.getAttribute('aria-disabled') === 'true';
+                    if (isDisabled) {
+                        console.log(`[AliexpressParser] SKU Item disabled, skipping: ${text}`);
+                        continue;
+                    }
+
                     if (text && !seen.has(text)) {
                         seen.add(text);
 
@@ -598,7 +605,8 @@ class AliexpressParser extends BaseParser {
                             if (!wasSelected) {
 
                                 item.click();
-                                await new Promise(resolve => setTimeout(resolve, 600));
+                                // Reduced from 600ms to 450ms for performance
+                                await new Promise(resolve => setTimeout(resolve, 450));
                             }
 
                             // Try multiple selectors
@@ -616,9 +624,13 @@ class AliexpressParser extends BaseParser {
                                 }
                             }
 
-                            await new Promise(resolve => setTimeout(resolve, 300));
+                            // Reduced from 300ms to 200ms
+                            await new Promise(resolve => setTimeout(resolve, 200));
 
-                            const bodyText = document.body.innerText;
+                            // [Performance] Use targeted container for stock text to avoid body.innerText reflow
+                            const infoContainer = document.querySelector('.pdp-info-right') || document.querySelector('[class*="product-info"]') || document.body;
+                            const bodyText = infoContainer.textContent;
+
                             let piecesMatch = bodyText.match(/(\d+)\s*pieces?\s*available/i);
                             if (piecesMatch) {
                                 stock = parseInt(piecesMatch[1], 10);
@@ -632,51 +644,31 @@ class AliexpressParser extends BaseParser {
                                         stock = parseInt(koreanMatch[1], 10);
                                     } else if (bodyText.toLowerCase().includes('sold out') || bodyText.includes('품절') || bodyText.toLowerCase().includes('out of stock')) {
                                         stock = 'out_of_stock';
-                                    } else {
-                                        const stockSelectors = ['[class*="quantity"]', '[class*="stock"]', '[class*="available"]', '[class*="inventory"]', '[data-spm*="quantity"]', '.product-quantity', '#quantity', '[id*="quantity"]'];
-                                        let found = false;
-                                        for (const sel of stockSelectors) {
-                                            const elements = document.querySelectorAll(sel);
-                                            for (const stockEl of elements) {
-                                                const stockText = stockEl.textContent.trim();
-                                                if (stockText.length > 0 && stockText.length < 100) {
-                                                    const numMatch = stockText.match(/(\d+)/);
-                                                    if (numMatch) {
-                                                        const num = parseInt(numMatch[1], 10);
-                                                        if (num > 0 && num < 100000) {
-                                                            stock = num;
-                                                            found = true;
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            if (found) break;
-                                        }
-                                        if (stock === null) stock = 'in_stock';
                                     }
                                 }
                             }
-                        } catch (e) {
-
+                        } catch (err) {
+                            console.warn(`[AliexpressParser] Failed to extract price/stock for option: ${text}`, err);
                         }
 
-                        const optValue = { text, value, selected: wasSelected, image: imageUrl };
-                        if (price !== null) {
-                            optValue.price = price;
-                            optValue.priceType = 'absolute';
-                            optValue.priceText = priceText;
-                        }
-                        if (stock !== null) optValue.stock = stock;
-                        data.values.push(optValue);
+                        data.values.push({
+                            text: text,
+                            value: value,
+                            price: price,
+                            priceText: priceText,
+                            stock: stock,
+                            image: imageUrl,
+                            imageUrl: imageUrl
+                        });
                     }
                 }
-                if (data.values.length >= 1) {
+                if (data.values.length > 0) {
                     opts.push(data);
 
                 }
             }
         }
+        console.log(`[AliexpressParser] SKU collection done. Found ${opts.length} groups.`);
         return opts;
     }
 
@@ -749,8 +741,11 @@ class AliexpressParser extends BaseParser {
             // 모든 Shadow Root 수집 (중첩된 것 포함)
             const allRootsSet = collectAllShadowRoots(mainContainer);
 
-            // document.querySelectorAll('*') 방식도 병행하여 놓친 것 추가
-            document.querySelectorAll('*').forEach(el => {
+            // [Optimized] redundant querySelectorAll('*') loop 제거.
+            // collectAllShadowRoots가 이미 재귀적으로 모든 shadow root를 수집함.
+            // 만약 놓친게 있을까봐 걱정된다면 light DOM의 최상위 shadow hosts만 추가로 확인
+            const topShadowHosts = document.querySelectorAll('div, section, main, article');
+            topShadowHosts.forEach(el => {
                 if (el.shadowRoot && !allRootsSet.has(el.shadowRoot)) {
                     allRootsSet.add(el.shadowRoot);
                     collectAllShadowRoots(el.shadowRoot, allRootsSet);

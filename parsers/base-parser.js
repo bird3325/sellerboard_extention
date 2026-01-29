@@ -479,66 +479,66 @@ class BaseParser {
     combineOptionGroups(groups) {
         if (!groups || groups.length === 0) return [];
 
-        // 재귀함수: depth는 현재 처리 중인 그룹 인덱스
-        const combine = (depth, currentPart) => {
-            // 기저 사례: 모든 그룹을 순회했을 때
-            if (depth === groups.length) {
-                return [currentPart];
-            }
+        // 0. 조합 개수 추정 및 제한 (폭주 방지)
+        let estimatedCount = 1;
+        for (const g of groups) {
+            if (g.values && g.values.length > 0) estimatedCount *= g.values.length;
+        }
 
-            const group = groups[depth];
-            // 값이 없는 그룹(빈 그룹) 처리: 건너뛰기
-            if (!group.values || group.values.length === 0) {
-                return combine(depth + 1, currentPart);
-            }
+        if (estimatedCount > 5000) {
+            console.warn(`[BaseParser] Too many combinations (${estimatedCount}), limiting to first 5000`);
+        }
 
-            const results = [];
+        let combinedValues = [{}];
 
-            // 현재 그룹의 모든 옵션 값 순회
-            for (const option of group.values) {
-                // 첫 번째 처리되는 그룹(유효한 값 있는)인지 확인
-                const isFirst = (!currentPart.text && !currentPart.value);
+        // 1. 반복적 조합 생성 (Recursion/Spread 대비 성능 및 스택 이슈 해결)
+        for (const group of groups) {
+            const nextCombined = [];
+            const groupValues = group.values || [];
+            if (groupValues.length === 0) continue;
 
-                // 텍스트/값 처리 (text가 없으면 value 사용)
-                const optText = option.text || option.value || '';
-                const optValue = option.value || option.text || '';
+            for (const current of combinedValues) {
+                for (const option of groupValues) {
+                    // 제한 도달 시 중단
+                    if (nextCombined.length >= 5000) break;
 
-                const newText = isFirst ? optText : `${currentPart.text} ${optText}`;
-                const newValue = isFirst ? optValue : `${currentPart.value} ${optValue}`;
+                    const isFirst = (!current.text && !current.value);
+                    const optText = option.text || option.value || '';
+                    const optValue = option.value || option.text || '';
 
-                // 가격: 하위 옵션 가격 우선 (없으면 상위 유지)
-                let price = currentPart.price || 0;
-                if (option.price !== undefined && option.price !== null && option.price !== 0) {
-                    price = option.price;
+                    // 구분자 ' / ' 사용 (기존 공백에서 변경하여 가독성 향상)
+                    const newText = isFirst ? optText : `${current.text} / ${optText}`;
+                    const newValue = isFirst ? optValue : `${current.value} / ${optValue}`;
+
+                    // 가격: 하위 옵션 가격 우선
+                    let price = current.price || 0;
+                    if (option.price !== undefined && option.price !== null && option.price !== 0) {
+                        price = option.price;
+                    }
+
+                    // 재고: 하위 옵션 재고 우선
+                    let stock = current.stock;
+                    if (option.stock !== undefined && option.stock !== null) {
+                        stock = option.stock;
+                    }
+
+                    // 이미지
+                    const optImage = option.image || option.imageUrl;
+                    let image = optImage || current.image;
+
+                    nextCombined.push({
+                        text: newText,
+                        value: newValue,
+                        price: price,
+                        stock: stock,
+                        image: image,
+                        imageUrl: image
+                    });
                 }
-
-                // 재고: 하위 옵션 재고 우선
-                let stock = currentPart.stock;
-                if (option.stock !== undefined && option.stock !== null) {
-                    stock = option.stock;
-                }
-
-                // 이미지: 하위 옵션 이미지 우선
-                const optImage = option.image || option.imageUrl;
-                let image = optImage || currentPart.image;
-
-                // 병합된 객체 생성
-                const merged = {
-                    text: newText,
-                    value: newValue,
-                    price: price,
-                    stock: stock,
-                    image: image,
-                    imageUrl: image // 일관성 유지
-                };
-
-                // 재귀 호출
-                results.push(...combine(depth + 1, merged));
+                if (nextCombined.length >= 5000) break;
             }
-            return results;
-        };
-
-        const combinedValues = combine(0, {});
+            combinedValues = nextCombined;
+        }
 
         // 그룹 이름 합치기
         const combinedName = groups.map(g => g.name || '옵션').join(' / ');
