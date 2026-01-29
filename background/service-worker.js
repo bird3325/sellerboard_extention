@@ -214,8 +214,8 @@ async function handleScraping(url, sendResponse, collectionType = 'single') {
         const scrapeResult = await new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 pendingScrapes.delete(targetTab.id);
-                reject(new Error('Timeout: 수집 시간이 너무 오래 걸립니다 (60초 초과).'));
-            }, 60000); // 60초 타임아웃
+                reject(new Error('Timeout: 수집 시간이 너무 오래 걸립니다 (180초 초과).'));
+            }, 180000); // 180초 타임아웃
 
             pendingScrapes.set(targetTab.id, { resolve, reject, timer });
         });
