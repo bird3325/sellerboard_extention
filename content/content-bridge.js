@@ -91,12 +91,24 @@ window.addEventListener('message', async (event) => {
     else if (type === 'SCRAPE_PRODUCT' || type === 'SCRAPE_PRODUCT_RELAY' || type === 'DETAIL_SCRAPING_REQ') {
         try {
             console.log('[SellerBoard Bridge] 상세 수집 요청 수신:', payload);
-            const url = payload?.url || payload;
+
+            // Payload 정규화 (String or Object)
+            let finalPayload = {};
+            if (typeof payload === 'string') {
+                finalPayload = { url: payload };
+            } else {
+                finalPayload = { ...payload };
+            }
+
+            // Web App 기본 모드는 'work'로 설정 (SW의 기본값인 'single'을 오버라이드)
+            if (!finalPayload.collection_type) {
+                finalPayload.collection_type = 'work';
+            }
 
             const response = await chrome.runtime.sendMessage({
                 action: 'SCRAPE_PRODUCT',
                 type: 'SCRAPE_PRODUCT',
-                payload: { url }
+                payload: finalPayload
             });
 
             // 웹 앱으로 결과 전달 (extensionBridge.ts가 기대하는 형식)

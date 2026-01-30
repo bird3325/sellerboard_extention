@@ -5,6 +5,7 @@
 
 // Static import (Service Worker는 dynamic import를 지원하지 않음)
 import { SupabaseClient } from '../lib/supabase-client.js';
+import { UrlUtils } from '../lib/url-utils.js';
 
 // Supabase 클라이언트 인스턴스
 let supabaseClient = null;
@@ -116,8 +117,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return true;
 
         case 'SCRAPE_PRODUCT':
+            console.log('[ServiceWorker] Internal SCRAPE_PRODUCT received:', message);
             const url = message.payload ? message.payload.url : (message.url || message.data?.url);
-            const collectionType = message.payload?.collection_type || message.collection_type || 'single'; // Default to single (Direct Collection)
+
+            // 기본값 설정 (Web App에서 온 요청은 'work'로 강제)
+            let defaultCollectionType = 'single';
+            if (sender.tab && sender.tab.url) {
+                const origin = new URL(sender.tab.url).origin;
+                if (origin.includes('localhost:3000') || origin.includes('sellerboard.vercel.app')) {
+                    defaultCollectionType = 'work';
+                    console.log('[ServiceWorker] Request from Web App detected. Defaulting to WORK mode.');
+                }
+            }
+
+            const collectionType = message.payload?.collection_type || message.collection_type || defaultCollectionType;
+            console.log('[ServiceWorker] Determined Collection Type:', collectionType);
             handleScraping(url, sendResponse, collectionType);
             return true;
 
@@ -171,144 +185,160 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
 /**
  * 중복 탭 생성을 방지하며 탭을 엽니다.
  */
+// [ASYNC SCRAPING] 진행 중인 스크래핑 요청 (Promise Coalescing)
+// Key: Normalized URL, Value: Promise<Result>
+const scrapeRequestMap = new Map();
+
+/**
+ * 중복 탭 생성을 방지하며 탭을 엽니다.
+ */
 async function openDedicatedScrapeTab(url) {
-    // 1. URL 정규화 (파라미터 등 제거 후 비교 권장)
-    const targetUrl = url.split('?')[0].split('#')[0];
+    // 1. URL 정규화 (트래킹 파라미터 제거)
+    const normalizedUrl = UrlUtils.normalize(url);
+    const baseUrl = UrlUtils.getBaseUrl(url);
 
-    // 2. 이미 열린 탭 검색
-    // chrome.tabs.query에서 url 패턴을 사용하여 검색
-    const tabs = await chrome.tabs.query({ url: targetUrl + '*' });
+    // 2. 이미 열린 탭 검색 (정확도 향상을 위해 Base URL + Query Pattern 검색은 복잡하므로 Base URL로 1차 필터링)
+    // 주의: 단순 Base URL 검색은 다른 상품(파라미터 차이)을 같은 탭으로 오인할 수 있음.
+    // 하지만 브라우저 tabs.query는 패턴 매칭 제한이 있음.
+    // 따라서 모든 탭을 가져와서 비교하거나, Base URL로 검색 후 필터링해야 함.
 
-    if (tabs.length > 0) {
-        // 이미 존재하는 탭이 있다면 새로 열지 않고 해당 탭을 활성하(focus)
-        console.log(`[ServiceWorker] Existing tab found for ${targetUrl}. Focusing tab ${tabs[0].id}`);
-        await safeTabOperation(() => chrome.tabs.update(tabs[0].id, { active: true }));
+    // 여기서는 기존 로직대로 BaseURL + wildcard 사용하되, 검색된 탭들의 URL을 2차 검증
+    const tabs = await chrome.tabs.query({ url: baseUrl + '*' });
 
-        // 윈도우도 포커스
+    // 정확한 매칭 탭 찾기 (Normalized URL 기준 비교)
+    const existingTab = tabs.find(tab => {
+        return UrlUtils.normalize(tab.url) === normalizedUrl;
+    });
+
+    if (existingTab) {
+        // 이미 존재하는 탭 사용
+        console.log(`[ServiceWorker] Existing tab found for ${normalizedUrl}. Focusing tab ${existingTab.id}`);
+        await safeTabOperation(() => chrome.tabs.update(existingTab.id, { active: true }));
+
         try {
-            await chrome.windows.update(tabs[0].windowId, { focused: true });
+            await chrome.windows.update(existingTab.windowId, { focused: true });
         } catch (e) { }
 
-        return { tab: tabs[0], isNew: false };
+        return { tab: existingTab, isNew: false };
     }
 
-    // 3. 존재하지 않을 때만 새로 생성
+    // 3. 새 탭 생성
     console.log('[ServiceWorker] Creating new tab for:', url);
     const tab = await safeTabOperation(() => chrome.tabs.create({ url: url, active: true }));
     return { tab: tab, isNew: true };
 }
 
 /**
- * 스크래핑 핸들러
- */
-/**
- * 스크래핑 핸들러 (Async Modified)
+ * 스크래핑 핸들러 (Promise Coalescing Applied)
  */
 async function handleScraping(url, sendResponse, collectionType = 'single') {
     console.log(`[ServiceWorker] handleScraping START | URL: ${url} | Type: ${collectionType}`);
 
-    let targetTab = null;
-    let createdNewTab = false;
-    let normalizedUrlForThrottling = url;
+    if (!url) {
+        sendResponse({ type: 'SOURCING_ERROR', error: 'No URL provided' });
+        return;
+    }
+
+    // URL Scheme 보정
+    if (url.startsWith('//')) {
+        url = 'https:' + url;
+    } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+    }
+
+    const normalizedUrl = UrlUtils.normalize(url);
+
+    // [Request Coalescing] 이미 진행 중인 동일 상품 수집 요청이 있다면, 그 결과를 공유
+    if (scrapeRequestMap.has(normalizedUrl)) {
+        console.log(`[ServiceWorker] Joining existing scrape request for: ${normalizedUrl}`);
+        try {
+            const result = await scrapeRequestMap.get(normalizedUrl);
+            sendResponse(result); // 기존 요청의 결과를 동일하게 반환
+        } catch (error) {
+            sendResponse({ type: 'SOURCING_ERROR', error: error.message || 'Scraping failed' });
+        }
+        return;
+    }
+
+    // 새 요청 시작
+    const scrapePromise = performScrapingInternal(url, normalizedUrl, collectionType);
+
+    // Map에 등록
+    scrapeRequestMap.set(normalizedUrl, scrapePromise);
 
     try {
-        if (!url) {
-            console.error('[ServiceWorker] No URL provided to handleScraping');
-            sendResponse({ type: 'SOURCING_ERROR', error: 'No URL provided' });
-            return;
-        }
-
-        // Ensure URL has a scheme
-        if (url.startsWith('//')) {
-            url = 'https:' + url;
-        } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            url = 'https://' + url;
-        }
-
-        // 1. 중복 요청 방지 (Throttling - 3초 내 동일 URL 요청 무시)
-        normalizedUrlForThrottling = url.split('?')[0].split('#')[0];
-        if (processingUrls.has(normalizedUrlForThrottling)) {
-            console.warn(`[ServiceWorker] Throttling: Duplicate request ignored for ${normalizedUrlForThrottling}`);
-            sendResponse({ type: 'SOURCING_ERROR', error: '이미 수집이 진행 중인 상품입니다. 잠시 후 다시 시도해주세요.' });
-            return;
-        }
-
-        processingUrls.add(normalizedUrlForThrottling);
-        setTimeout(() => {
-            processingUrls.delete(normalizedUrlForThrottling);
-        }, 3000);
-
-        // 2. 전용 탭 열기 (중복 탭 체크 포함)
-        const result = await openDedicatedScrapeTab(url);
-        targetTab = result.tab;
-        createdNewTab = result.isNew;
-
-        if (!targetTab) {
-            throw new Error('Failed to create or find target tab');
-        }
-
-        // 로딩 대기
-        console.log(`[ServiceWorker] Waiting for tab ${targetTab.id} to load...`);
-        await waitForTabLoad(targetTab.id);
-
-        // 안정화 대기
-        console.log('[ServiceWorker] Page stabilization delay (3000ms)...');
-        await delay(3000);
-
-        // [ASYNC CHANGE] 1. 수집 시작 명령 전송 (즉시 응답 기대)
-        console.log(`[ServiceWorker] Sending EXT_SCRAPE_NOW to tab ${targetTab.id}`);
-        const startResponse = await sendMessageToTabWithRetry(targetTab.id, { action: "EXT_SCRAPE_NOW" });
-
-        // 시작 응답 확인
-        if (!startResponse || startResponse.status !== 'started') {
-            console.log('[ServiceWorker] Unexpected start response:', startResponse);
-            // 기존 동기식 응답이 왔을 경우 (하위 호환)
-            if (startResponse && (startResponse.name || startResponse.title)) {
-                console.log('[ServiceWorker] Received legacy sync response');
-                await processScrapedData(startResponse, targetTab, collectionType, createdNewTab);
-                sendResponse({ type: 'SOURCING_COMPLETE', payload: { ...startResponse, logMessage: '[수집완료] (Sync)' } });
-                return;
-            }
-            throw new Error('수집 시작 응답이 올바르지 않습니다.');
-        }
-
-        console.log(`[ServiceWorker] Scrape started on tab ${targetTab.id}. Waiting for async completion...`);
-
-        // [ASYNC CHANGE] 2. 완료 메시지 대기 (Promise 생성)
-        const scrapeResult = await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => {
-                if (pendingScrapes.has(targetTab.id)) {
-                    console.error(`[ServiceWorker] Timeout (300s) reached for tab ${targetTab.id}`);
-                    pendingScrapes.delete(targetTab.id);
-                    reject(new Error('Timeout: 수집 시간이 너무 오래 걸립니다 (300초 초과).'));
-                }
-            }, 300000); // 300초 타임아웃 (5분)
-
-            pendingScrapes.set(targetTab.id, { resolve, reject, timer, url });
-        });
-
-        console.log("[ServiceWorker] Async Scraped Data Received:", scrapeResult.name);
-
-        // 3. 데이터 처리 및 저장
-        const finalPayload = await processScrapedData(scrapeResult, targetTab, collectionType, createdNewTab);
-
-        console.log('[ServiceWorker] Sending SOURCING_COMPLETE to Web App');
-        sendResponse({ type: 'SOURCING_COMPLETE', payload: finalPayload });
-
-    } catch (e) {
-        console.error("[ServiceWorker] handleScraping FAILED:", e);
-
-        // 탭 닫기 (새로 만든 탭이고 에러가 난 경우에도 정리)
-        if (createdNewTab && targetTab && targetTab.id) {
-            try {
-                console.log(`[ServiceWorker] Cleaning up orphaned tab ${targetTab.id} after error`);
-                await safeTabOperation(() => chrome.tabs.remove(targetTab.id));
-            } catch (closeErr) { }
-        }
-
-        sendResponse({ type: 'SOURCING_ERROR', error: e.toString() });
+        const result = await scrapePromise;
+        sendResponse(result);
+    } catch (error) {
+        console.error(`[ServiceWorker] Scraping failed for ${normalizedUrl}:`, error);
+        sendResponse({ type: 'SOURCING_ERROR', error: error.message || 'Scraping failed during execution' });
+    } finally {
+        // 완료 후 Map에서 제거
+        scrapeRequestMap.delete(normalizedUrl);
     }
 }
+
+/**
+ * 실제 스크래핑 로직 (Internal)
+ * @returns {Promise<Object>} 결과 페이로드 반환 (sendResponse에 전달할 객체)
+ */
+async function performScrapingInternal(url, normalizedUrl, collectionType) {
+    let targetTab = null;
+    let createdNewTab = false;
+
+    // 1. 탭 열기
+    const result = await openDedicatedScrapeTab(url);
+    targetTab = result.tab;
+    createdNewTab = result.isNew;
+
+    if (!targetTab) {
+        throw new Error('Failed to create or find target tab');
+    }
+
+    // 2. 로딩 대기
+    console.log(`[ServiceWorker] Waiting for tab ${targetTab.id} to load...`);
+    await waitForTabLoad(targetTab.id);
+
+    // 3. 안정화 대기
+    console.log('[ServiceWorker] Page stabilization delay (3000ms)...');
+    await delay(3000);
+
+    // 4. 수집 시작 명령 전송
+    console.log(`[ServiceWorker] Sending EXT_SCRAPE_NOW to tab ${targetTab.id}`);
+    const startResponse = await sendMessageToTabWithRetry(targetTab.id, { action: "EXT_SCRAPE_NOW" });
+
+    // 5. 시작 응답 검증
+    if (!startResponse || startResponse.status !== 'started') {
+        // 레거시 호환 (즉시 데이터가 오는 경우)
+        if (startResponse && (startResponse.name || startResponse.title)) {
+            const finalPayload = await processScrapedData(startResponse, targetTab, collectionType, createdNewTab);
+            return { type: 'SOURCING_COMPLETE', payload: { ...startResponse, logMessage: '[수집완료] (Sync Legacy)' } };
+        }
+        throw new Error('수집 시작 응답이 올바르지 않습니다.');
+    }
+
+    console.log(`[ServiceWorker] Scrape started on tab ${targetTab.id}. Waiting for async completion...`);
+
+    // 6. 결과 대기 (Promise)
+    const scrapeData = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            if (pendingScrapes.has(targetTab.id)) {
+                pendingScrapes.delete(targetTab.id);
+                reject(new Error('Timeout: 수집 시간이 너무 오래 걸립니다 (300초 초과).'));
+            }
+        }, 300000); // 300초
+
+        pendingScrapes.set(targetTab.id, { resolve, reject, timer, url });
+    });
+
+    console.log("[ServiceWorker] Async Scraped Data Received:", scrapeData.name);
+
+    // 7. 데이터 처리 및 저장
+    const finalPayload = await processScrapedData(scrapeData, targetTab, collectionType, createdNewTab);
+
+    return { type: 'SOURCING_COMPLETE', payload: finalPayload };
+}
+
 
 /**
  * [ASYNC] 수집 완료 핸들러
@@ -358,8 +388,13 @@ async function processScrapedData(data, targetTab, collectionType, shouldCloseTa
             saveResult.skipped = true;
             saveResult.error = data.reason;
         } else {
-            // Update collection_type
-            if (!data.collection_type) data.collection_type = collectionType;
+            // Update collection_type (Force overwrite to ensure consistency)
+            console.log(`[ServiceWorker] Saving Product with Collection Type: ${collectionType}`);
+            if (collectionType) {
+                data.collection_type = collectionType;
+            } else if (!data.collection_type) {
+                data.collection_type = 'single'; // Fallback
+            }
 
             const client = await initializeSupabase();
             const savedData = await client.saveProduct(data);
