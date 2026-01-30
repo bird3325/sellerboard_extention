@@ -13,6 +13,9 @@ let supabaseClient = null;
 // Key: tabId, Value: { resolve, reject, timer }
 const pendingScrapes = new Map();
 
+// 중복 요청 방지를 위한 Set (최근 처리 중인 URL 저장)
+const processingUrls = new Set();
+
 async function initializeSupabase() {
     if (supabaseClient) return supabaseClient;
 
@@ -166,6 +169,36 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
 });
 
 /**
+ * 중복 탭 생성을 방지하며 탭을 엽니다.
+ */
+async function openDedicatedScrapeTab(url) {
+    // 1. URL 정규화 (파라미터 등 제거 후 비교 권장)
+    const targetUrl = url.split('?')[0].split('#')[0];
+
+    // 2. 이미 열린 탭 검색
+    // chrome.tabs.query에서 url 패턴을 사용하여 검색
+    const tabs = await chrome.tabs.query({ url: targetUrl + '*' });
+
+    if (tabs.length > 0) {
+        // 이미 존재하는 탭이 있다면 새로 열지 않고 해당 탭을 활성하(focus)
+        console.log(`[ServiceWorker] Existing tab found for ${targetUrl}. Focusing tab ${tabs[0].id}`);
+        await safeTabOperation(() => chrome.tabs.update(tabs[0].id, { active: true }));
+
+        // 윈도우도 포커스
+        try {
+            await chrome.windows.update(tabs[0].windowId, { focused: true });
+        } catch (e) { }
+
+        return { tab: tabs[0], isNew: false };
+    }
+
+    // 3. 존재하지 않을 때만 새로 생성
+    console.log('[ServiceWorker] Creating new tab for:', url);
+    const tab = await safeTabOperation(() => chrome.tabs.create({ url: url, active: true }));
+    return { tab: tab, isNew: true };
+}
+
+/**
  * 스크래핑 핸들러
  */
 /**
@@ -173,6 +206,11 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
  */
 async function handleScraping(url, sendResponse, collectionType = 'single') {
     console.log(`[ServiceWorker] handleScraping START | URL: ${url} | Type: ${collectionType}`);
+
+    let targetTab = null;
+    let createdNewTab = false;
+    let normalizedUrlForThrottling = url;
+
     try {
         if (!url) {
             console.error('[ServiceWorker] No URL provided to handleScraping');
@@ -187,21 +225,26 @@ async function handleScraping(url, sendResponse, collectionType = 'single') {
             url = 'https://' + url;
         }
 
-        let targetTab = null;
-        let createdNewTab = true; // [Change] Force new tab for reliability in automation
-
-        console.log('[ServiceWorker] Creating new tab for:', url);
-        targetTab = await safeTabOperation(() => chrome.tabs.create({ url: url, active: true }));
-
-        if (!targetTab) {
-            throw new Error('Failed to create target tab');
+        // 1. 중복 요청 방지 (Throttling - 3초 내 동일 URL 요청 무시)
+        normalizedUrlForThrottling = url.split('?')[0].split('#')[0];
+        if (processingUrls.has(normalizedUrlForThrottling)) {
+            console.warn(`[ServiceWorker] Throttling: Duplicate request ignored for ${normalizedUrlForThrottling}`);
+            sendResponse({ type: 'SOURCING_ERROR', error: '이미 수집이 진행 중인 상품입니다. 잠시 후 다시 시도해주세요.' });
+            return;
         }
 
-        // Ensure window is focused (important for some sites to load scripts)
-        try {
-            await chrome.windows.update(targetTab.windowId, { focused: true });
-        } catch (winErr) {
-            console.warn('[ServiceWorker] Window focus failed:', winErr);
+        processingUrls.add(normalizedUrlForThrottling);
+        setTimeout(() => {
+            processingUrls.delete(normalizedUrlForThrottling);
+        }, 3000);
+
+        // 2. 전용 탭 열기 (중복 탭 체크 포함)
+        const result = await openDedicatedScrapeTab(url);
+        targetTab = result.tab;
+        createdNewTab = result.isNew;
+
+        if (!targetTab) {
+            throw new Error('Failed to create or find target tab');
         }
 
         // 로딩 대기
