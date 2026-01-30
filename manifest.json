@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "셀러보드 - 상품 정보 수집",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "다중 플랫폼 상품 수집 (Supabase 연동)",
   "permissions": [
     "activeTab",

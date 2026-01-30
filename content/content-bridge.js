@@ -128,3 +128,14 @@ window.addEventListener('message', async (event) => {
         }
     }
 });
+
+/**
+ * Background -> Web App Relay
+ * 서비스 워커에서 온 다이렉트 메시지 결과를 웹 페이지로 중계
+ */
+chrome.runtime.onMessage.addListener((message) => {
+    if (message.source === 'SELLERBOARD_EXT_RELAY') {
+        console.log('[SellerBoard Bridge] Relaying Background message to Window:', message.payload?.type);
+        window.postMessage(message.payload, '*');
+    }
+});

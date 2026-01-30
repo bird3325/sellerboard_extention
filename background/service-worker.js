@@ -168,17 +168,85 @@ async function handleSyncSession(sessionData, sendResponse) {
 /**
  * 외부 메시지 리스너 (웹 -> 확장프로그램)
  */
-chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => {
-    console.log('[ServiceWorker] Received message from Web:', request);
-    if (request.type === 'SCRAPE_PRODUCT' || request.action === 'SCRAPE_PRODUCT') {
-        const url = request.payload ? request.payload.url : request.url;
-        const collectionType = request.payload?.collection_type || request.collection_type || 'work'; // Default to work (Workflow)
-        handleScraping(url, sendResponse, collectionType);
-        return true; // 비동기 응답을 위해 true 반환
-    }
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+    console.log('[ServiceWorker] Received external message from Web:', message);
 
-    if (request.type === 'PING') {
-        sendResponse({ type: 'PONG' });
+    const action = message.action || message.type;
+
+    switch (action) {
+        case 'SCRAPE_PRODUCT':
+        case 'SCRAPE_PRODUCT_RELAY':
+        case 'DETAIL_SCRAPING_REQ':
+            const url = message.payload ? message.payload.url : (message.url || message.data?.url);
+            const collectionType = message.payload?.collection_type || message.collection_type || 'work';
+
+            console.log(`[ServiceWorker] 📥 External Scraping Request | Action: ${action} | URL: ${url}`);
+
+            handleScraping(url, (response) => {
+                const finalResponse = {
+                    type: response?.type || 'SOURCING_COMPLETE',
+                    source: 'SELLERBOARD_EXT',
+                    payload: response?.payload || response,
+                    error: response?.error
+                };
+                respondAndRelay(sender, sendResponse, finalResponse, action);
+            }, collectionType);
+            return true;
+
+        case 'SYNC_SESSION':
+            console.log('[ServiceWorker] 📥 External Session Sync Request');
+            handleSyncSession(message.payload || message.sessionData, (result) => {
+                const finalResponse = {
+                    type: 'SYNC_SESSION_COMPLETE',
+                    source: 'SELLERBOARD_EXT',
+                    success: result.success,
+                    error: result.error
+                };
+                respondAndRelay(sender, sendResponse, finalResponse, 'SYNC_SESSION');
+            });
+            return true;
+
+        case 'SOURCING_REQ':
+        case 'EXECUTE_SOURCING':
+            console.log('[ServiceWorker] 📥 External Sourcing Request Dispatched');
+            performSourcing(message.payload || message.data)
+                .then(results => {
+                    const finalResponse = {
+                        type: 'SOURCING_COMPLETE',
+                        source: 'SELLERBOARD_EXT',
+                        payload: results
+                    };
+                    respondAndRelay(sender, sendResponse, finalResponse, 'SOURCING_REQ');
+                })
+                .catch(err => {
+                    console.error('[ServiceWorker] ❌ External Sourcing Error:', err);
+                    respondAndRelay(sender, sendResponse, {
+                        type: 'SOURCING_ERROR',
+                        source: 'SELLERBOARD_EXT',
+                        error: err.message
+                    }, 'SOURCING_ERROR');
+                });
+            return true;
+
+        case 'getStats':
+            handleGetStats((stats) => {
+                sendResponse({ ...stats, source: 'SELLERBOARD_EXT' });
+            });
+            return true;
+
+        case 'checkDuplicate':
+            handleCheckDuplicate(message.url, (result) => {
+                sendResponse({ ...result, source: 'SELLERBOARD_EXT' });
+            });
+            return true;
+
+        case 'PING':
+            sendResponse({ type: 'PONG', source: 'SELLERBOARD_EXT' });
+            break;
+
+        default:
+            console.warn('[ServiceWorker] Unhandled external action:', action);
+            sendResponse({ error: 'Unsupported action', action });
     }
 });
 
@@ -564,8 +632,15 @@ async function performSourcing({ keyword, platform, sourcing_workflows }) {
         }
 
         // 7. 탭 닫기
-        await safeTabOperation(() => chrome.tabs.remove(tabId));
+        console.log('[ServiceWorker] 소싱 완료: 탭 닫기 시도...');
+        try {
+            await safeTabOperation(() => chrome.tabs.remove(tabId));
+            console.log('[ServiceWorker] 소싱 탭 닫기 완료');
+        } catch (removeError) {
+            console.warn('[ServiceWorker] 소싱 탭 닫기 실패 (무시하고 진행):', removeError);
+        }
 
+        console.log('[ServiceWorker] performSourcing 종료 - 결과 반환');
         return limitedItems;
 
     } catch (error) {
@@ -997,6 +1072,27 @@ function detectPlatform(url) {
 }
 
 /**
+ * 응답 및 윈도우 릴레이 (Web App 호환성 강화)
+ */
+function respondAndRelay(sender, sendResponse, responseData, actionName) {
+    // 1. 다이렉트 콜백 응답 (Direct Message Callback)
+    console.log(`[ServiceWorker] 📤 1/2 Response Callback Sent | Action: ${actionName}`);
+    sendResponse(responseData);
+
+    // 2. 윈도우 릴레이 (Window postMessage Relay via Content Script)
+    // 웹 앱이 window.message 리스너만 가지고 있는 경우를 대비
+    if (sender && sender.tab && sender.tab.id) {
+        console.log(`[ServiceWorker] 📤 2/2 Window Relay Triggered via Tab ${sender.tab.id}`);
+        chrome.tabs.sendMessage(sender.tab.id, {
+            source: 'SELLERBOARD_EXT_RELAY',
+            payload: responseData
+        }).catch(() => {
+            // 탭이 닫혔거나 스크립트가 로드되지 않은 경우 무시
+        });
+    }
+}
+
+/**
  * 안전한 탭 작업 (드래그 중 에러 등 방지)
  */
 async function safeTabOperation(operation, retries = 5, delayMs = 500) {
@@ -1004,12 +1100,13 @@ async function safeTabOperation(operation, retries = 5, delayMs = 500) {
         try {
             return await operation();
         } catch (error) {
-            const isEditError = error.message && error.message.includes('Tabs cannot be edited');
+            const isEditError = error.message && (error.message.includes('Tabs cannot be edited') || error.message.includes('dragging'));
             if (isEditError && i < retries - 1) {
-                console.warn(`[ServiceWorker] Tab editing blocked, retrying in ${delayMs}ms... (Attempt ${i + 1}/${retries})`);
+                console.warn(`[ServiceWorker] Tab operation blocked, retrying in ${delayMs}ms... (Attempt ${i + 1}/${retries})`);
                 await delay(delayMs);
                 continue;
             }
+            console.error('[ServiceWorker] safeTabOperation 최종 실패:', error.message);
             throw error;
         }
     }
