@@ -123,16 +123,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             // 기본값 설정 (Web App에서 온 요청은 'work'로 강제)
             let defaultCollectionType = 'single';
             if (sender.tab && sender.tab.url) {
-                const origin = new URL(sender.tab.url).origin;
-                if (origin.includes('localhost:3000') || origin.includes('sellerboard.vercel.app')) {
-                    defaultCollectionType = 'work';
-                    console.log('[ServiceWorker] Request from Web App detected. Defaulting to WORK mode.');
-                }
+                try {
+                    const origin = new URL(sender.tab.url).origin;
+                    if (origin.includes('localhost:3000') || origin.includes('sellerboard.vercel.app')) {
+                        defaultCollectionType = 'work';
+                        console.log('[ServiceWorker] Request from Web App detected. Defaulting to WORK mode.');
+                    }
+                } catch (e) { }
             }
 
             const collectionType = message.payload?.collection_type || message.collection_type || defaultCollectionType;
-            console.log('[ServiceWorker] Determined Collection Type:', collectionType);
-            handleScraping(url, sendResponse, collectionType);
+            const productId = message.payload?.productId || message.productId || message.data?.productId;
+            console.log('[ServiceWorker] Determined Collection Type:', collectionType, 'ProductID:', productId);
+            handleScraping(url, sendResponse, collectionType, productId);
             return true;
 
         case 'SYNC_SESSION':
@@ -178,9 +181,11 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
         case 'SCRAPE_PRODUCT_RELAY':
         case 'DETAIL_SCRAPING_REQ':
             const url = message.payload ? message.payload.url : (message.url || message.data?.url);
-            const collectionType = message.payload?.collection_type || message.collection_type || 'work';
+            // 웹 포털에서 온 외부 요청인 경우 'work' 타입 강제 (Step 1 요구사항)
+            const collectionType = 'work';
+            const productId = message.payload?.productId || message.productId || message.data?.productId;
 
-            console.log(`[ServiceWorker] 📥 External Scraping Request | Action: ${action} | URL: ${url}`);
+            console.log(`[ServiceWorker] 📥 External Scraping Request | Action: ${action} | URL: ${url} | PID: ${productId}`);
 
             handleScraping(url, (response) => {
                 const finalResponse = {
@@ -190,7 +195,7 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
                     error: response?.error
                 };
                 respondAndRelay(sender, sendResponse, finalResponse, action);
-            }, collectionType);
+            }, collectionType, productId);
             return true;
 
         case 'SYNC_SESSION':
@@ -209,7 +214,11 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
         case 'SOURCING_REQ':
         case 'EXECUTE_SOURCING':
             console.log('[ServiceWorker] 📥 External Sourcing Request Dispatched');
-            performSourcing(message.payload || message.data)
+            const sourcingPayload = message.payload || message.data;
+            // 웹 포털에서 온 외부 요청인 경우 'work' 타입 강제 (Step 1 요구사항)
+            if (sourcingPayload) sourcingPayload.collection_type = 'work';
+
+            performSourcing(sourcingPayload)
                 .then(results => {
                     const finalResponse = {
                         type: 'SOURCING_COMPLETE',
@@ -299,8 +308,8 @@ async function openDedicatedScrapeTab(url) {
 /**
  * 스크래핑 핸들러 (Promise Coalescing Applied)
  */
-async function handleScraping(url, sendResponse, collectionType = 'single') {
-    console.log(`[ServiceWorker] handleScraping START | URL: ${url} | Type: ${collectionType}`);
+async function handleScraping(url, sendResponse, collectionType = 'single', productId = null) {
+    console.log(`[ServiceWorker] handleScraping START | URL: ${url} | Type: ${collectionType} | PID: ${productId}`);
 
     if (!url) {
         sendResponse({ type: 'SOURCING_ERROR', error: 'No URL provided' });
@@ -329,7 +338,7 @@ async function handleScraping(url, sendResponse, collectionType = 'single') {
     }
 
     // 새 요청 시작
-    const scrapePromise = performScrapingInternal(url, normalizedUrl, collectionType);
+    const scrapePromise = performScrapingInternal(url, normalizedUrl, collectionType, productId);
 
     // Map에 등록
     scrapeRequestMap.set(normalizedUrl, scrapePromise);
@@ -350,7 +359,7 @@ async function handleScraping(url, sendResponse, collectionType = 'single') {
  * 실제 스크래핑 로직 (Internal)
  * @returns {Promise<Object>} 결과 페이로드 반환 (sendResponse에 전달할 객체)
  */
-async function performScrapingInternal(url, normalizedUrl, collectionType) {
+async function performScrapingInternal(url, normalizedUrl, collectionType, productId) {
     let targetTab = null;
     let createdNewTab = false;
 
@@ -379,7 +388,7 @@ async function performScrapingInternal(url, normalizedUrl, collectionType) {
     if (!startResponse || startResponse.status !== 'started') {
         // 레거시 호환 (즉시 데이터가 오는 경우)
         if (startResponse && (startResponse.name || startResponse.title)) {
-            const finalPayload = await processScrapedData(startResponse, targetTab, collectionType, createdNewTab);
+            const finalPayload = await processScrapedData(startResponse, targetTab, collectionType, createdNewTab, productId);
             return { type: 'SOURCING_COMPLETE', payload: { ...startResponse, logMessage: '[수집완료] (Sync Legacy)' } };
         }
         throw new Error('수집 시작 응답이 올바르지 않습니다.');
@@ -402,7 +411,7 @@ async function performScrapingInternal(url, normalizedUrl, collectionType) {
     console.log("[ServiceWorker] Async Scraped Data Received:", scrapeData.name);
 
     // 7. 데이터 처리 및 저장
-    const finalPayload = await processScrapedData(scrapeData, targetTab, collectionType, createdNewTab);
+    const finalPayload = await processScrapedData(scrapeData, targetTab, collectionType, createdNewTab, productId);
 
     return { type: 'SOURCING_COMPLETE', payload: finalPayload };
 }
@@ -446,7 +455,7 @@ function handleAutoScrapeError(message, sender, sendResponse) {
 /**
  * 수집 데이터 처리 및 DB 저장 (공통 로직 분리)
  */
-async function processScrapedData(data, targetTab, collectionType, shouldCloseTab) {
+async function processScrapedData(data, targetTab, collectionType, shouldCloseTab, productId = null) {
     let saveResult = { saved: false, error: null };
 
     // [AUTO SAVE]
@@ -462,6 +471,12 @@ async function processScrapedData(data, targetTab, collectionType, shouldCloseTa
                 data.collection_type = collectionType;
             } else if (!data.collection_type) {
                 data.collection_type = 'single'; // Fallback
+            }
+
+            // Sync Product ID if available
+            if (productId) {
+                console.log(`[ServiceWorker] Using provided Product ID: ${productId}`);
+                data.id = productId;
             }
 
             const client = await initializeSupabase();
@@ -989,9 +1004,14 @@ async function sendMessageToTabWithRetry(tabId, message, retries = 3) {
             // 1. 메시지 전송 시도
             return await chrome.tabs.sendMessage(tabId, message);
         } catch (error) {
-            // 2. 연결 실패 시 스크립트 주입 시도 (첫 번째 실패 시에만)
+            // 2. 연결 실패 시 또는 컨텍스트 무효화 시 스크립트 주입 시도 (첫 번째 실패 시에만)
             // 탭이 닫힌 경우(No tab with id)는 주입 시도하지 않음
-            if (i === 0 && error.message.includes('Could not establish connection')) {
+            const errorMsg = error.message || '';
+            const isConnectionError = errorMsg.includes('Could not establish connection') ||
+                errorMsg.includes('Extension context invalidated') ||
+                errorMsg.includes('context_invalidated');
+
+            if (i === 0 && isConnectionError) {
 
                 try {
                     // 탭이 여전히 존재하는지 재확인
