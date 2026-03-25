@@ -237,7 +237,7 @@ async function handleLogout() {
  * 대시보드 열기
  */
 function openDashboard() {
-    const dashboardUrl = 'https://supabase.com/dashboard/project/ukjrsqthaibsvvycwduu/editor';
+    const dashboardUrl = 'https://sellerboard.vercel.app/';
     chrome.tabs.create({ url: dashboardUrl });
 }
 
