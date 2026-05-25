@@ -48,6 +48,7 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
         }
         setupMessageListeners();
         setupKeyboardShortcuts();
+        checkAndInitListCollection();
     }
 
     /**
@@ -402,6 +403,270 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
             description: document.body.innerText.substring(0, 200), // 간략 설명
             url: window.location.href
         };
+    }
+
+    /**
+     * 목록 담기 기능 초기화 체크
+     */
+    async function checkAndInitListCollection() {
+        const url = window.location.href;
+        
+        // 상세 페이지인 경우 작동 안 함
+        const isDetailPattern = [
+            /aliexpress\.com\/item\//,
+            /taobao\.com\/item/,
+            /1688\.com\/offer\//,
+            /tmall\.com\/item/,
+            /detail\.tmall\.com/
+        ].some(pat => pat.test(url));
+
+        if (isDetailPattern) return;
+
+        // 플랫폼 감지
+        if (typeof PlatformDetector === 'undefined') return;
+        const platform = PlatformDetector.detect(url);
+        if (platform === PlatformDetector.PLATFORMS.GENERIC) return;
+
+        // 백그라운드에 이 플랫폼이 활성화되어 있는지 조회
+        try {
+            chrome.runtime.sendMessage({
+                action: 'checkPlatformActive',
+                platformId: platform
+            }, (response) => {
+                if (response && response.isActive) {
+                    console.log(`[ContentScript] ${platform} 플랫폼 활성화 상태 확인. 목록 담기 기능을 시작합니다.`);
+                    startListCollectionObserver(platform);
+                } else {
+                    console.log(`[ContentScript] ${platform} 플랫폼 비활성화 상태. 목록 담기 기능을 시작하지 않습니다.`);
+                }
+            });
+        } catch (e) {
+            console.error('[ContentScript] 플랫폼 활성화 체크 실패:', e);
+        }
+    }
+
+    let currentToast = null;
+
+    /**
+     * 담기 결과 토스트 알림 표시
+     */
+    function showToast(message, isSuccess = true) {
+        if (currentToast) currentToast.remove();
+
+        const toast = document.createElement('div');
+        toast.className = 'sb-toast';
+        toast.innerText = message;
+        toast.style.position = 'fixed';
+        toast.style.bottom = '24px';
+        toast.style.right = '24px';
+        toast.style.zIndex = '99999';
+        toast.style.padding = '12px 24px';
+        toast.style.backgroundColor = isSuccess ? 'rgba(16, 185, 129, 0.95)' : 'rgba(239, 68, 68, 0.95)';
+        toast.style.color = '#fff';
+        toast.style.borderRadius = '8px';
+        toast.style.fontWeight = 'bold';
+        toast.style.fontSize = '14px';
+        toast.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+        toast.style.transition = 'all 0.3s ease';
+        toast.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+
+        document.body.appendChild(toast);
+        currentToast = toast;
+
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(10px)';
+            setTimeout(() => toast.remove(), 300);
+        }, 2500);
+    }
+
+    /**
+     * 상품 리스트에 담기 버튼 관찰 및 추가
+     */
+    async function startListCollectionObserver(platform) {
+        const config = {
+            aliexpress: {
+                card: '.k7_v, .search-item-card-wrapper-gallery, .list-item, .product-card, [class*="manhattan--container"], .search-card-item',
+                link: 'a[href*="/item/"]',
+                name: '.k7_kw, h1, h2, h3, [class*="title"], .item-title',
+                price: '.k7_lu, [class*="price"], [class*="Price"]',
+                image: 'img'
+            },
+            taobao: {
+                card: 'div[class*="item"], li[class*="item"], .item, [class*="Card--"]',
+                link: 'a[href*="/item/"], a[href*="detail.tmall.com"]',
+                name: '[class*="title"], h1, h2, h3',
+                price: '[class*="price"], strong, em',
+                image: 'img'
+            },
+            naver: {
+                card: 'li[class*="product_item"], div[class*="product_item"]',
+                link: 'a[href*="/products/"]',
+                name: '[class*="title"]',
+                price: '[class*="price"]',
+                image: 'img'
+            },
+            generic: {
+                card: 'div[class*="product"], li[class*="product"]',
+                link: 'a',
+                name: 'h1, h2, h3, [class*="title"]',
+                price: '[class*="price"]',
+                image: 'img'
+            }
+        };
+
+        const platConfig = config[platform] || config.generic;
+
+        // 큐 상태 로드
+        let queueResult = await chrome.storage.local.get(['sourcing_collect_queue']);
+        let queue = queueResult.sourcing_collect_queue || [];
+
+        const updateButtons = () => {
+            const cards = document.querySelectorAll(platConfig.card);
+            cards.forEach(card => {
+                // 이미 추가된 경우 스킵 및 큐 상태 체크에 따른 싱크
+                if (card.querySelector('.sb-list-add-btn')) {
+                    const btn = card.querySelector('.sb-list-add-btn');
+                    const url = btn.dataset.url;
+                    const isAlreadyInQueue = queue.some(item => item.url === url);
+                    
+                    if (isAlreadyInQueue && btn.innerText !== '✔️ 담김') {
+                        btn.innerText = '✔️ 담김';
+                        btn.style.backgroundColor = 'rgba(16, 185, 129, 0.95)';
+                    } else if (!isAlreadyInQueue && btn.innerText === '✔️ 담김') {
+                        btn.innerText = '⭐ 담기';
+                        btn.style.backgroundColor = 'rgba(79, 70, 229, 0.9)';
+                    }
+                    return;
+                }
+
+                // 상품 상세 링크 찾기
+                const linkEl = card.querySelector(platConfig.link) || card.closest('a');
+                if (!linkEl) return;
+
+                let rawUrl = linkEl.href;
+                if (!rawUrl || rawUrl.startsWith('javascript:')) return;
+                
+                if (rawUrl.startsWith('//')) rawUrl = 'https:' + rawUrl;
+                let cleanUrl = rawUrl.split('?')[0];
+
+                // 카드 내에 상대 위치 부여
+                const currentPos = window.getComputedStyle(card).position;
+                if (currentPos !== 'absolute' && currentPos !== 'relative' && currentPos !== 'fixed') {
+                    card.style.position = 'relative';
+                }
+
+                // 버튼 생성 (인라인 스타일을 사용해 기존 레이아웃/스타일 완벽 유지)
+                const addBtn = document.createElement('button');
+                addBtn.className = 'sb-list-add-btn';
+                addBtn.dataset.url = cleanUrl;
+
+                const isAlreadyInQueue = queue.some(item => item.url === cleanUrl);
+                if (isAlreadyInQueue) {
+                    addBtn.innerText = '✔️ 담김';
+                    addBtn.style.backgroundColor = 'rgba(16, 185, 129, 0.95)';
+                } else {
+                    addBtn.innerText = '⭐ 담기';
+                    addBtn.style.backgroundColor = 'rgba(79, 70, 229, 0.9)';
+                }
+
+                addBtn.style.position = 'absolute';
+                addBtn.style.top = '8px';
+                addBtn.style.right = '8px';
+                addBtn.style.zIndex = '999';
+                addBtn.style.padding = '6px 12px';
+                addBtn.style.color = '#ffffff';
+                addBtn.style.border = 'none';
+                addBtn.style.borderRadius = '6px';
+                addBtn.style.cursor = 'pointer';
+                addBtn.style.fontSize = '12px';
+                addBtn.style.fontWeight = 'bold';
+                addBtn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+                addBtn.style.transition = 'all 0.2s ease';
+                addBtn.style.lineHeight = '1';
+                addBtn.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+
+                // 호버 효과
+                addBtn.addEventListener('mouseenter', () => {
+                    addBtn.style.transform = 'scale(1.05)';
+                    addBtn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.2)';
+                });
+                addBtn.addEventListener('mouseleave', () => {
+                    addBtn.style.transform = 'scale(1)';
+                    addBtn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+                });
+
+                // 클릭 이벤트 바인딩
+                addBtn.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const latestResult = await chrome.storage.local.get(['sourcing_collect_queue']);
+                    let currentQueue = latestResult.sourcing_collect_queue || [];
+
+                    const isInQueue = currentQueue.some(item => item.url === cleanUrl);
+
+                    if (isInQueue) {
+                        currentQueue = currentQueue.filter(item => item.url !== cleanUrl);
+                        await chrome.storage.local.set({ sourcing_collect_queue: currentQueue });
+                        queue = currentQueue;
+                        
+                        addBtn.innerText = '⭐ 담기';
+                        addBtn.style.backgroundColor = 'rgba(79, 70, 229, 0.9)';
+                        showToast('담기 취소되었습니다.', false);
+                    } else {
+                        const nameEl = card.querySelector(platConfig.name);
+                        const name = nameEl ? nameEl.textContent.trim() : '상품명 없음';
+
+                        const priceEl = card.querySelector(platConfig.price);
+                        let price = 0;
+                        if (priceEl) {
+                            price = parseFloat(priceEl.textContent.replace(/[^0-9.]/g, '')) || 0;
+                        }
+
+                        const imgEl = card.querySelector(platConfig.image);
+                        let imageUrl = '';
+                        if (imgEl) {
+                            imageUrl = imgEl.src || imgEl.dataset.src || '';
+                            if (imageUrl.startsWith('//')) imageUrl = 'https:' + imageUrl;
+                        }
+
+                        const newItem = {
+                            url: cleanUrl,
+                            name,
+                            price,
+                            imageUrl,
+                            platform,
+                            addedAt: new Date().toISOString()
+                        };
+
+                        currentQueue.push(newItem);
+                        await chrome.storage.local.set({ sourcing_collect_queue: currentQueue });
+                        queue = currentQueue;
+
+                        addBtn.innerText = '✔️ 담김';
+                        addBtn.style.backgroundColor = 'rgba(16, 185, 129, 0.95)';
+                        showToast('상품을 담았습니다! (몰털이 팝업에서 수집 가능)');
+                    }
+                });
+
+                card.appendChild(addBtn);
+            });
+        };
+
+        // 초기 실행
+        updateButtons();
+
+        // 1초 주기로 버튼 스캔
+        setInterval(updateButtons, 1000);
+
+        // 스토리지 동기화
+        chrome.storage.onChanged.addListener((changes, namespace) => {
+            if (namespace === 'local' && changes.sourcing_collect_queue) {
+                queue = changes.sourcing_collect_queue.newValue || [];
+                updateButtons();
+            }
+        });
     }
 
 }

@@ -53,7 +53,7 @@ function setupEventListeners() {
         }
     });
 
-    document.getElementById('mode-store').addEventListener('click', () => triggerMode('trigger_store', { collection_type: 'store' }));
+    document.getElementById('mode-store').addEventListener('click', startQueueCollection);
 
     // 배치 수집 버튼
     document.getElementById('mode-batch').addEventListener('click', startBatchCollection);
@@ -417,6 +417,47 @@ function showMessage(element, message, type) {
     element.textContent = message;
     element.className = 'status-message ' + type;
     element.style.display = 'block';
+}
+
+/**
+ * 담아둔 대기열 상품 수집 시작
+ */
+async function startQueueCollection() {
+    try {
+        const result = await chrome.storage.local.get(['sourcing_collect_queue']);
+        const queue = result.sourcing_collect_queue || [];
+
+        if (queue.length === 0) {
+            alert('담겨진 상품이 없습니다.\n\n소싱 플랫폼(예: 알리익스프레스) 상품 목록에서 [⭐ 담기] 버튼을 클릭해 수집할 상품을 먼저 담아주세요.');
+            return;
+        }
+
+        const confirmCollect = confirm(`담겨진 ${queue.length}개의 상품 수집을 시작하시겠습니까?\n\n(수집이 완료되면 대기열에서 자동 삭제됩니다.)`);
+        if (!confirmCollect) return;
+
+        // 프로그레스 창 열기
+        const progressWindow = await chrome.windows.create({
+            url: chrome.runtime.getURL('progress/progress.html'),
+            type: 'popup',
+            width: 400,
+            height: 500,
+            focused: true
+        });
+
+        // 대기열 수집 요청
+        const response = await chrome.runtime.sendMessage({
+            action: 'queueCollect',
+            progressWindowId: progressWindow.id
+        });
+
+        if (!response.success) {
+            alert(response.error || '대기열 수집 실패');
+            chrome.windows.remove(progressWindow.id);
+        }
+    } catch (error) {
+        console.error('대기열 수집 오류:', error);
+        alert('대기열 수집 중 오류가 발생했습니다.');
+    }
 }
 
 /**

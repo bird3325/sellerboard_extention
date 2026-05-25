@@ -16,6 +16,21 @@ window.addEventListener('message', async (event) => {
 
     const { type, payload } = event.data;
 
+    // chrome.runtime 유효성 체크 추가
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+        console.warn('[SellerBoard Bridge] chrome.runtime is undefined or unavailable.');
+        
+        // 특정 타입에 맞는 완료 응답 반환
+        const completeType = type === 'SYNC_SESSION' ? 'SYNC_SESSION_COMPLETE' : 'SOURCING_ERROR';
+        window.postMessage({
+            type: completeType,
+            source: 'SELLERBOARD_EXT',
+            success: false,
+            error: 'EXTENSION_INVALIDATED'
+        }, '*');
+        return;
+    }
+
     // 2. 메시지 처리
     if (type === 'PING') {
         // 연결 확인 (Handshake)
@@ -27,6 +42,10 @@ window.addEventListener('message', async (event) => {
             console.log('[SellerBoard Bridge] 소싱 요청 수신:', payload);
 
             // 3. Background Script로 실제 작업 위임 (CORS 회피 및 다중 탭 제어)
+            if (!chrome?.runtime?.sendMessage) {
+                throw new Error('EXTENSION_INVALIDATED');
+            }
+
             const results = await chrome.runtime.sendMessage({
                 action: 'EXECUTE_SOURCING',
                 data: payload
@@ -39,13 +58,18 @@ window.addEventListener('message', async (event) => {
                 payload: results
             }, '*');
         } catch (err) {
-            console.error('[SellerBoard Bridge] 소싱 요청 처리 중 오류:', err);
+            const errorMessage = err.message || '';
+            const isInvalidated = errorMessage.includes('Extension context invalidated') || 
+                                 errorMessage.includes('Cannot read properties of undefined') ||
+                                 errorMessage.includes('EXTENSION_INVALIDATED');
 
-            let errorMessage = err.message || '알 수 없는 오류가 발생했습니다.';
+            if (!isInvalidated) {
+                console.error('[SellerBoard Bridge] 소싱 요청 처리 중 오류:', err);
+            }
 
-            // 확장 프로그램이 재로딩되었을 때 발생하는 에러 처리
-            if (errorMessage.includes('Extension context invalidated')) {
-                errorMessage = '확장 프로그램이 업데이트되었습니다. 페이지를 새로고침해주세요.';
+            let responseMessage = '알 수 없는 오류가 발생했습니다.';
+            if (isInvalidated) {
+                responseMessage = '확장 프로그램이 업데이트되었습니다. 페이지를 새로고침해주세요.';
             }
 
             window.postMessage({
@@ -61,6 +85,10 @@ window.addEventListener('message', async (event) => {
             console.log('[SellerBoard Bridge] 세션 동기화 요청 수신');
 
             // Background Script로 세션 전달
+            if (!chrome?.runtime?.sendMessage) {
+                throw new Error('EXTENSION_INVALIDATED');
+            }
+
             const result = await chrome.runtime.sendMessage({
                 action: 'SYNC_SESSION',
                 sessionData: payload
@@ -73,8 +101,12 @@ window.addEventListener('message', async (event) => {
             }, '*');
         } catch (err) {
             const errorMessage = err.message || '';
+            const isInvalidated = errorMessage.includes('Extension context invalidated') || 
+                                 errorMessage.includes('Cannot read properties of undefined') ||
+                                 errorMessage.includes('EXTENSION_INVALIDATED');
+
             // Quietly handle invalidation or log other errors
-            if (!errorMessage.includes('Extension context invalidated')) {
+            if (!isInvalidated) {
                 console.error('[SellerBoard Bridge] 세션 동기화 오류:', err);
             }
 
@@ -105,6 +137,10 @@ window.addEventListener('message', async (event) => {
                 finalPayload.collection_type = 'work';
             }
 
+            if (!chrome?.runtime?.sendMessage) {
+                throw new Error('EXTENSION_INVALIDATED');
+            }
+
             const response = await chrome.runtime.sendMessage({
                 action: 'SCRAPE_PRODUCT',
                 type: 'SCRAPE_PRODUCT',
@@ -119,11 +155,19 @@ window.addEventListener('message', async (event) => {
                 error: response?.error
             }, '*');
         } catch (err) {
-            console.error('[SellerBoard Bridge] 상세 수집 요청 오류:', err);
+            const errorMessage = err.message || '';
+            const isInvalidated = errorMessage.includes('Extension context invalidated') || 
+                                 errorMessage.includes('Cannot read properties of undefined') ||
+                                 errorMessage.includes('EXTENSION_INVALIDATED');
+
+            if (!isInvalidated) {
+                console.error('[SellerBoard Bridge] 상세 수집 요청 오류:', err);
+            }
+
             window.postMessage({
                 type: 'SOURCING_ERROR',
                 source: 'SELLERBOARD_EXT',
-                error: err.message
+                error: isInvalidated ? '확장 프로그램이 업데이트되었습니다. 페이지를 새로고침해주세요.' : errorMessage
             }, '*');
         }
     }
@@ -133,9 +177,11 @@ window.addEventListener('message', async (event) => {
  * Background -> Web App Relay
  * 서비스 워커에서 온 다이렉트 메시지 결과를 웹 페이지로 중계
  */
-chrome.runtime.onMessage.addListener((message) => {
-    if (message.source === 'SELLERBOARD_EXT_RELAY') {
-        console.log('[SellerBoard Bridge] Relaying Background message to Window:', message.payload?.type);
-        window.postMessage(message.payload, '*');
-    }
-});
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((message) => {
+        if (message.source === 'SELLERBOARD_EXT_RELAY') {
+            console.log('[SellerBoard Bridge] Relaying Background message to Window:', message.payload?.type);
+            window.postMessage(message.payload, '*');
+        }
+    });
+}

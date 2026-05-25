@@ -103,6 +103,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             handleBatchCollect(message, sendResponse);
             return true;
 
+        case 'queueCollect':
+            handleQueueCollect(message, sendResponse);
+            return true;
+
         case 'checkPlatformActive':
             handleCheckPlatformActive(message.platformId, sendResponse);
             return true;
@@ -935,6 +939,97 @@ async function handleBatchCollect(message, sendResponse) {
 
     } catch (error) {
         console.error('[ServiceWorker] 배치 수집 오류:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+/**
+ * 담기 대기열 상품 순차 수집 처리
+ */
+async function handleQueueCollect(message, sendResponse) {
+    try {
+        const result = await chrome.storage.local.get(['sourcing_collect_queue']);
+        let queue = result.sourcing_collect_queue || [];
+
+        if (queue.length === 0) {
+            sendResponse({ success: false, error: '수집할 상품이 없습니다.' });
+            return;
+        }
+
+        // 결과 객체 초기화
+        const results = {
+            total: queue.length,
+            success: 0,
+            failed: 0,
+            errors: []
+        };
+
+        // 비동기 실행 (서비스 워커 타임아웃 방지 및 즉시 응답)
+        (async () => {
+            const initialQueueLength = queue.length;
+            
+            for (let i = 0; i < initialQueueLength; i++) {
+                // 매 루프마다 스토리지에서 최신 대기열을 다시 읽음
+                const curResult = await chrome.storage.local.get(['sourcing_collect_queue']);
+                let currentQueue = curResult.sourcing_collect_queue || [];
+                if (currentQueue.length === 0) break;
+
+                const item = currentQueue[0]; // 항상 첫 번째 아이템 처리
+                const completed = i;
+                const percentage = Math.floor((completed / initialQueueLength) * 100);
+
+                // 진행 상황 전송 (시작 시)
+                chrome.runtime.sendMessage({
+                    action: 'batchProgress',
+                    data: {
+                        current: completed,
+                        total: initialQueueLength,
+                        percentage,
+                        currentTab: item.name || item.url
+                    }
+                }).catch(() => { });
+
+                try {
+                    const normalizedUrl = UrlUtils.normalize(item.url);
+                    // performScrapingInternal(url, normalizedUrl, collectionType, productId)
+                    const scrapeResult = await performScrapingInternal(item.url, normalizedUrl, 'store', null);
+                    
+                    if (scrapeResult && scrapeResult.type === 'SOURCING_COMPLETE' && scrapeResult.payload?.autoSave?.saved) {
+                        results.success++;
+                    } else {
+                        const errorMsg = scrapeResult?.payload?.autoSave?.error || '저장 실패';
+                        throw new Error(errorMsg);
+                    }
+                } catch (error) {
+                    console.error(`[ServiceWorker] 대기열 상품 수집 실패 (${item.url}):`, error);
+                    results.failed++;
+                    results.errors.push({
+                        tab: item.name || item.url,
+                        error: error.message
+                    });
+                }
+
+                // 성공/실패 여부와 관계없이 처리한 항목은 큐에서 제거
+                currentQueue.shift();
+                await chrome.storage.local.set({ sourcing_collect_queue: currentQueue });
+
+                // 다음 수집 전 딜레이 (서버 부하 방지 및 안정화)
+                await delay(3000);
+            }
+
+            // 완료 메시지 전송
+            chrome.runtime.sendMessage({
+                action: 'batchComplete',
+                results: results
+            }).catch(() => { });
+
+        })();
+
+        // 즉시 시작 성공 응답을 보냅니다 (MV3 타임아웃 방지)
+        sendResponse({ success: true });
+
+    } catch (error) {
+        console.error('[ServiceWorker] 대기열 수집 오류:', error);
         sendResponse({ success: false, error: error.message });
     }
 }
