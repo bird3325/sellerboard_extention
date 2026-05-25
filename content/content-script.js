@@ -48,6 +48,7 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
         }
         setupMessageListeners();
         setupKeyboardShortcuts();
+        checkAndInitCartIcons();
     }
 
     /**
@@ -402,6 +403,237 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
             description: document.body.innerText.substring(0, 200), // 간략 설명
             url: window.location.href
         };
+    }
+
+    /**
+     * 플랫폼 활성화 여부 확인 및 담기 아이콘 초기화
+     */
+    async function checkAndInitCartIcons() {
+        const platform = PlatformDetector.detect();
+        if (!platform || platform === 'generic') return;
+
+        try {
+            chrome.runtime.sendMessage({
+                action: 'checkPlatformActive',
+                platformId: platform
+            }, (response) => {
+                if (response && response.isActive) {
+                    setupCartIconsObserver();
+                }
+            });
+        } catch (e) {
+            console.error('[Content] checkPlatformActive failed:', e);
+        }
+    }
+
+    function isProductLink(h) {
+        if (!h) return false;
+
+        // 알리익스프레스(aliexpress.com) 상품 링크 판단 완화
+        if (h.includes('aliexpress.com')) {
+            return h.includes('/item/') || 
+                   h.includes('/product/') || 
+                   h.includes('/products/') || 
+                   h.includes('/goods/') || 
+                   h.includes('detail.html') ||
+                   /\d{10,20}\.html/.test(h) ||
+                   (h.includes('productId=') && /\d{10,20}/.test(h));
+        }
+
+        return (
+            h.includes('/item/') ||
+            h.includes('/product/') ||
+            h.includes('/goods/') ||
+            h.includes('/products/') ||
+            (h.includes('smartstore.naver.com') && h.includes('/products/'))
+        );
+    }
+
+    // 글로벌 CSS 스타일 주입 (가려진 영역으로 인한 mouseenter 오작동 해결)
+    if (!document.getElementById('sb-cart-style')) {
+        const style = document.createElement('style');
+        style.id = 'sb-cart-style';
+        style.textContent = `
+            .sb-cart-container { position: relative !important; }
+            .sb-cart-container:hover .sb-cart-btn { opacity: 1 !important; z-index: 999999 !important; }
+            .sb-cart-btn { opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease !important; }
+            .sb-cart-btn:hover { transform: scale(1.2) !important; }
+            .sb-cart-btn.sb-contained { opacity: 0.3 !important; }
+            .sb-cart-container:hover .sb-cart-btn.sb-contained { opacity: 0.3 !important; }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function injectCartIcons() {
+        const productLinks = document.querySelectorAll('a[href]');
+        productLinks.forEach(a => {
+            const h = a.href;
+            if (!isProductLink(h)) return;
+
+            // 이미 아이콘이 삽입되어 있다면 패스
+            if (a.querySelector('.sb-cart-btn') || a.classList.contains('sb-cart-processed')) return;
+
+            // 이미지 찾기 휴리스틱 (알리 SuperDeals 등 템플릿 대응)
+            let img = a.querySelector('img');
+            let imgContainer = a;
+
+            const card = a.closest('div[class*="item"], li, div[class*="card"], div[class*="product"], div[class*="subject"], div[class*="goods"]');
+            if (!img && card) {
+                img = card.querySelector('img');
+                if (img) {
+                    imgContainer = a.offsetHeight > 30 ? a : card;
+                }
+            }
+
+            // [구제책] 알리 특가 페이지 등에서 이미지가 가려져서 전혀 안 뽑히는 경우에도
+            // card의 크기 또는 a 태그 자체의 크기가 충분히 크면(가로 60px & 세로 60px 이상) 
+            // 상품 카드로 간주하고 a 태그 자체를 imgContainer로 지정하여 아이콘을 무조건 주입합니다.
+            const rect = a.getBoundingClientRect();
+            const isLargeClickArea = rect.width > 60 && rect.height > 60;
+            if (!img && !isLargeClickArea && (!card || card.offsetHeight < 40)) {
+                return; // 텍스트 링크 방지용 최후의 수단
+            }
+
+            a.classList.add('sb-cart-processed');
+            imgContainer.classList.add('sb-cart-container');
+
+            // 겹침 배치를 위한 포지션 세팅
+            const computedStyle = window.getComputedStyle(imgContainer);
+            if (computedStyle.position === 'static') {
+                imgContainer.style.position = 'relative';
+            }
+
+            // 담기 버튼 생성
+            const btn = document.createElement('button');
+            btn.className = 'sb-cart-btn';
+            const logoUrl = chrome.runtime.getURL('assets/icons/icon48.png');
+            btn.innerHTML = `<img src="${logoUrl}" style="width: 24px; height: 24px; display: block; pointer-events: none;">`;
+            btn.title = '담기 수집 목록에 추가';
+            
+            // 인라인 스타일 적용 (UI 및 스타일 불간섭 원칙)
+            Object.assign(btn.style, {
+                position: 'absolute',
+                top: '8px',
+                right: '8px',
+                zIndex: '99999',
+                background: 'transparent',
+                border: 'none',
+                width: '28px',
+                height: '28px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '0',
+            });
+
+            // 이미 담겨 있는 URL인지 체크하여 초기 상태 적용
+            chrome.storage.local.get({ cart_items: [] }, (result) => {
+                const isContained = result.cart_items.some(item => 
+                    (typeof item === 'object' && item !== null) ? item.url === h : item === h
+                );
+                if (isContained) {
+                    btn.classList.add('sb-contained');
+                    btn.title = '이미 담겼습니다';
+                }
+            });
+
+            // 클릭 이벤트
+            btn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                // 해외 쇼핑몰인데 원화(KRW)로 설정되어 있는지 검사
+                const platform = PlatformDetector.detect();
+                const isKorean = PlatformDetector.isKoreanPlatform(platform);
+                
+                if (!isKorean) {
+                    const priceText = imgContainer.textContent || a.textContent || '';
+                    const isWon = priceText.includes('₩') || priceText.includes('원') || priceText.toUpperCase().includes('KRW');
+                    
+                    if (isWon) {
+                        showErrorModal('통화 설정 변경 안내', '현재 상품 가격이 원화(KRW)로 설정되어 있습니다.<br><br>해외 소싱 상품은 정확한 수집과 이중 환전 수수료 방지를 위해 쇼핑몰 설정에서 <b>통화를 달러(USD)로 변경</b> 후 다시 시도해 주세요.');
+                        return; // 담기 중단
+                    }
+                }
+
+                const result = await chrome.storage.local.get({ cart_items: [] });
+                const cartItems = result.cart_items;
+                const isContained = cartItems.some(item => 
+                    (typeof item === 'object' && item !== null) ? item.url === h : item === h
+                );
+
+                if (isContained) {
+                    // 이미 존재하면 제거 (토글)
+                    const newCartItems = cartItems.filter(item => {
+                        const itemUrl = (typeof item === 'object' && item !== null) ? item.url : item;
+                        return itemUrl !== h;
+                    });
+                    await chrome.storage.local.set({ cart_items: newCartItems });
+                    btn.classList.remove('sb-contained');
+                    btn.title = '담기 수집 목록에 추가';
+                    showToast('담기 해제되었습니다.');
+                } else {
+                    // 추가
+                    const imgSrc = img ? (img.src || img.dataset.src || '') : '';
+                    cartItems.push({ url: h, imageUrl: imgSrc });
+                    await chrome.storage.local.set({ cart_items: cartItems });
+                    btn.classList.add('sb-contained');
+                    btn.title = '이미 담겼습니다';
+                    showToast('담기 수집 목록에 추가되었습니다.');
+                }
+            };
+
+            imgContainer.appendChild(btn);
+        });
+    }
+
+    function showToast(message) {
+        const existing = document.querySelector('.sb-toast');
+        if (existing) existing.remove();
+
+        const toast = document.createElement('div');
+        toast.className = 'sb-toast';
+        toast.innerText = message;
+        
+        Object.assign(toast.style, {
+            position: 'fixed',
+            bottom: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            color: '#ffffff',
+            padding: '12px 24px',
+            borderRadius: '24px',
+            fontSize: '14px',
+            zIndex: '100000',
+            boxShadow: '0 4px 10px rgba(0,0,0,0.3)',
+            transition: 'opacity 0.2s ease',
+            opacity: '0'
+        });
+
+        document.body.appendChild(toast);
+        setTimeout(() => { toast.style.opacity = '1'; }, 10);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 200);
+        }, 2000);
+    }
+
+    function setupCartIconsObserver() {
+        injectCartIcons();
+
+        // 1. DOM 변화 실시간 감시
+        const observer = new MutationObserver(() => {
+            injectCartIcons();
+        });
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+
+        // 2. 동적 비동기 로딩(SuperDeals, 무한 스크롤) 백업용 1.5초 주기 폴링
+        setInterval(injectCartIcons, 1500);
     }
 
 }

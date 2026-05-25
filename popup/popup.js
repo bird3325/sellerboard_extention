@@ -6,11 +6,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadSavedId();
     await checkLoginStatus();
     setupEventListeners();
+    await updateCartCount();
 
     // 주기적 로그인 체크 (30초마다)
     setInterval(checkLoginStatus, 30000);
-
-
 });
 
 /**
@@ -53,7 +52,12 @@ function setupEventListeners() {
         }
     });
 
-    document.getElementById('mode-store').addEventListener('click', () => triggerMode('trigger_store', { collection_type: 'store' }));
+    // 담기 수집 모드 버튼 클릭 시 목록 토글
+    document.getElementById('mode-store').addEventListener('click', toggleCartList);
+
+    // 담기 목록 일괄 저장 및 일괄 삭제
+    document.getElementById('btn-collect-all-cart').addEventListener('click', startCartCollection);
+    document.getElementById('btn-clear-all-cart').addEventListener('click', clearAllCart);
 
     // 배치 수집 버튼
     document.getElementById('mode-batch').addEventListener('click', startBatchCollection);
@@ -63,10 +67,16 @@ function setupEventListeners() {
     // 중복 상품 보기 버튼
     document.getElementById('view-duplicate-btn').addEventListener('click', openDashboard);
 
-    // 배치 진행 상황 수신
+    // 배치 진행 상황 수신 및 완료 처리
     chrome.runtime.onMessage.addListener((message) => {
         if (message.action === 'batchProgress') {
             updateBatchProgress(message.data);
+        } else if (message.action === 'batchComplete') {
+            // 수집 완료 시, 담기 수집인 경우 카운트 및 목록 초기화
+            chrome.storage.local.set({ cart_items: [] }, () => {
+                updateCartCount();
+                renderCartList();
+            });
         }
     });
 }
@@ -151,7 +161,7 @@ async function checkLoginStatus() {
         console.error('세션 확인 실패:', error);
 
         // 확장 프로그램 컨텍스트 무효화 감지
-        if (error.message.includes('Extension context invalidated')) {
+        if (error?.message?.includes('Extension context invalidated')) {
 
             window.location.reload();
             return;
@@ -496,4 +506,256 @@ function cancelBatchCollection() {
  */
 function closeBatchResult() {
     document.getElementById('batch-result-modal').style.display = 'none';
+}
+
+/**
+ * 담기 수집 카운트 및 배지 갱신
+ */
+async function updateCartCount() {
+    try {
+        const result = await chrome.storage.local.get({ cart_items: [] });
+        const count = result.cart_items.length;
+        
+        const titleEl = document.getElementById('cart-count-title');
+        if (titleEl) {
+            titleEl.textContent = '담기 수집';
+        }
+
+        const badgeEl = document.getElementById('cart-badge');
+        if (badgeEl) {
+            if (count > 0) {
+                badgeEl.textContent = count;
+                badgeEl.style.display = 'flex';
+            } else {
+                badgeEl.style.display = 'none';
+            }
+        }
+    } catch (e) {
+        console.error('Failed to update cart count:', e);
+    }
+}
+
+/**
+ * 담기 목록 토글
+ */
+function toggleCartList() {
+    const section = document.getElementById('cart-list-section');
+    if (!section) return;
+
+    if (section.style.display === 'none') {
+        section.style.display = 'block';
+        renderCartList();
+    } else {
+        section.style.display = 'none';
+    }
+}
+
+/**
+ * 담기 목록 렌더링
+ */
+async function renderCartList() {
+    try {
+        const result = await chrome.storage.local.get({ cart_items: [] });
+        const cartItems = result.cart_items;
+        const listEl = document.getElementById('cart-items-list');
+        if (!listEl) return;
+
+        listEl.innerHTML = '';
+
+        if (cartItems.length === 0) {
+            listEl.innerHTML = '<li style="padding: 10px 0; text-align: center; color: #999;">담긴 상품이 없습니다.</li>';
+            return;
+        }
+
+        cartItems.forEach((item, index) => {
+            const li = document.createElement('li');
+            li.style.display = 'flex';
+            li.style.justify = 'space-between';
+            li.style.alignItems = 'center';
+            li.style.padding = '6px 0';
+            li.style.borderBottom = '1px dashed #eef2f5';
+
+            const url = (typeof item === 'object' && item !== null) ? item.url : item;
+            const imageUrl = (typeof item === 'object' && item !== null) ? item.imageUrl : '';
+
+            // 이미지와 텍스트 영역
+            const infoDiv = document.createElement('div');
+            infoDiv.style.display = 'flex';
+            infoDiv.style.alignItems = 'center';
+            infoDiv.style.gap = '8px';
+
+            if (imageUrl) {
+                const imgEl = document.createElement('img');
+                imgEl.src = imageUrl;
+                imgEl.style.width = '40px';
+                imgEl.style.height = '40px';
+                imgEl.style.objectFit = 'cover';
+                imgEl.style.borderRadius = '4px';
+                imgEl.style.border = '1px solid #eef2f5';
+                infoDiv.appendChild(imgEl);
+            }
+
+            let displayUrl = url;
+            try {
+                const parsed = new URL(url);
+                displayUrl = parsed.hostname + parsed.pathname;
+            } catch (e) {}
+
+            const span = document.createElement('span');
+            span.textContent = displayUrl;
+            span.style.overflow = 'hidden';
+            span.style.textOverflow = 'ellipsis';
+            span.style.whiteSpace = 'nowrap';
+            span.style.maxWidth = '190px';
+            span.title = url;
+            infoDiv.appendChild(span);
+
+            const actionsDiv = document.createElement('div');
+            actionsDiv.style.display = 'flex';
+            actionsDiv.style.gap = '6px';
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.textContent = '×';
+            deleteBtn.style.background = 'none';
+            deleteBtn.style.border = 'none';
+            deleteBtn.style.cursor = 'pointer';
+            deleteBtn.style.padding = '0 4px';
+            deleteBtn.style.fontSize = '14px';
+            deleteBtn.style.color = '#95a5a6';
+            deleteBtn.style.fontWeight = 'bold';
+            deleteBtn.style.lineHeight = '1';
+            deleteBtn.style.transition = 'color 0.2s';
+            deleteBtn.title = '제거';
+
+            deleteBtn.onmouseover = () => {
+                deleteBtn.style.color = '#e74c3c';
+            };
+            deleteBtn.onmouseout = () => {
+                deleteBtn.style.color = '#95a5a6';
+            };
+
+            deleteBtn.onclick = async () => {
+                const updatedItems = cartItems.filter(ci => {
+                    const ciUrl = (typeof ci === 'object' && ci !== null) ? ci.url : ci;
+                    return ciUrl !== url;
+                });
+                await chrome.storage.local.set({ cart_items: updatedItems });
+                await updateCartCount();
+                renderCartList();
+            };
+
+            actionsDiv.appendChild(deleteBtn);
+            li.appendChild(infoDiv);
+            li.appendChild(actionsDiv);
+            listEl.appendChild(li);
+        });
+    } catch (e) {
+        console.error('Failed to render cart list:', e);
+    }
+}
+
+/**
+ * 담기 목록 일괄 삭제
+ */
+async function clearAllCart() {
+    try {
+        const result = await chrome.storage.local.get({ cart_items: [] });
+        if (result.cart_items.length === 0) {
+            alert('삭제할 상품이 없습니다.');
+            return;
+        }
+
+        if (confirm('담아둔 모든 상품을 목록에서 삭제하시겠습니까?')) {
+            await chrome.storage.local.set({ cart_items: [] });
+            await updateCartCount();
+            renderCartList();
+        }
+    } catch (e) {
+        console.error('Failed to clear cart:', e);
+    }
+}
+
+/**
+ * 담기 목록 일괄 저장 실행
+ */
+let isCartCollecting = false;
+async function startCartCollection() {
+    if (isCartCollecting) return;
+
+    try {
+        const result = await chrome.storage.local.get({ cart_items: [] });
+        const cartItems = result.cart_items;
+
+        if (cartItems.length === 0) {
+            alert('담아둔 상품이 없습니다. 상품 목록에서 담기를 먼저 진행해주세요.');
+            return;
+        }
+
+        isCartCollecting = true;
+
+        // 1. 모든 상세페이지 탭 먼저 백그라운드로 열기 (비활성화 상태로 오픈)
+        const tabPromises = cartItems.map(item => {
+            const url = (typeof item === 'object' && item !== null) ? item.url : item;
+            return chrome.tabs.create({ url, active: false });
+        });
+
+        const openedTabs = await Promise.all(tabPromises);
+
+        // 2. 모든 페이지 로드 대기 (최대 15초 대기 헬퍼)
+        await Promise.all(openedTabs.map(tab => {
+            return new Promise((resolve) => {
+                let isResolved = false;
+                const checkComplete = () => {
+                    chrome.tabs.get(tab.id, (t) => {
+                        if (t && t.status === 'complete') {
+                            if (!isResolved) {
+                                isResolved = true;
+                                resolve();
+                            }
+                        } else if (!isResolved) {
+                            setTimeout(checkComplete, 500);
+                        }
+                    });
+                };
+                checkComplete();
+                // 15초 강제 타임아웃 방지책
+                setTimeout(() => {
+                    if (!isResolved) {
+                        isResolved = true;
+                        resolve();
+                    }
+                }, 15000);
+            });
+        }));
+
+        // 3. 모든 상세페이지가 완전히 다 열린 후, 팝업 진행창 (Progress Window) 열기
+        const progressWindow = await chrome.windows.create({
+            url: chrome.runtime.getURL('progress/progress.html'),
+            type: 'popup',
+            width: 400,
+            height: 500,
+            focused: true
+        });
+
+        // 4. 백그라운드로 일괄 배치 수집 실행 요청
+        const response = await chrome.runtime.sendMessage({
+            action: 'batchCollect',
+            progressWindowId: progressWindow.id
+        });
+
+        if (response && response.success) {
+            // 배치 수집이 성공적으로 종료되면, 담기 목록 비우기 및 UI 갱신
+            await chrome.storage.local.set({ cart_items: [] });
+            await updateCartCount();
+            await renderCartList();
+        } else {
+            alert(response?.error || '일괄 수집 중 오류가 발생했습니다.');
+        }
+
+    } catch (error) {
+        console.error('담기 수집 중 오류:', error);
+        alert('담기 수집 중 오류가 발생했습니다: ' + error.message);
+    } finally {
+        isCartCollecting = false;
+    }
 }

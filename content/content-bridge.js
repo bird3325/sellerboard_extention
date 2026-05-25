@@ -41,10 +41,11 @@ window.addEventListener('message', async (event) => {
         } catch (err) {
             console.error('[SellerBoard Bridge] 소싱 요청 처리 중 오류:', err);
 
-            let errorMessage = err.message || '알 수 없는 오류가 발생했습니다.';
+            const errMessage = err?.message || String(err || '');
+            let errorMessage = errMessage || '알 수 없는 오류가 발생했습니다.';
 
             // 확장 프로그램이 재로딩되었을 때 발생하는 에러 처리
-            if (errorMessage.includes('Extension context invalidated')) {
+            if (errMessage.includes('Extension context invalidated')) {
                 errorMessage = '확장 프로그램이 업데이트되었습니다. 페이지를 새로고침해주세요.';
             }
 
@@ -72,9 +73,9 @@ window.addEventListener('message', async (event) => {
                 success: result.success
             }, '*');
         } catch (err) {
-            const errorMessage = err.message || '';
+            const errMessage = err?.message || String(err || '');
             // Quietly handle invalidation or log other errors
-            if (!errorMessage.includes('Extension context invalidated')) {
+            if (!errMessage.includes('Extension context invalidated')) {
                 console.error('[SellerBoard Bridge] 세션 동기화 오류:', err);
             }
 
@@ -120,10 +121,18 @@ window.addEventListener('message', async (event) => {
             }, '*');
         } catch (err) {
             console.error('[SellerBoard Bridge] 상세 수집 요청 오류:', err);
+            
+            const errMessage = err?.message || String(err || '');
+            let errorMessage = errMessage || '상세 수집 중 알 수 없는 오류가 발생했습니다.';
+            
+            if (errMessage.includes('Extension context invalidated')) {
+                errorMessage = '확장 프로그램이 업데이트되었습니다. 페이지를 새로고침해주세요.';
+            }
+
             window.postMessage({
                 type: 'SOURCING_ERROR',
                 source: 'SELLERBOARD_EXT',
-                error: err.message
+                error: errorMessage
             }, '*');
         }
     }

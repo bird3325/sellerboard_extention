@@ -117,8 +117,11 @@
             <button class="mode-btn" id="mode-store">
               <div class="icon-circle store">🏪</div>
               <div class="mode-info">
-                <span class="mode-title">몰털이</span>
-                <span class="mode-desc">상점 전체 저장</span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span class="mode-title" id="cart-count-title">담기 수집</span>
+                  <span id="cart-badge" style="display: none; background-color: #ff4757; color: white; border-radius: 50%; font-size: 10px; font-weight: bold; width: 16px; height: 16px; align-items: center; justify-content: center; line-height: 1;">0</span>
+                </div>
+                <span class="mode-desc">담기 상품 저장</span>
               </div>
             </button>
             <button class="mode-btn batch-btn" id="mode-batch">
@@ -129,6 +132,20 @@
               </div>
             </button>
           </div>
+        </div>
+
+        <!-- Sourcing Cart List Section -->
+        <div id="cart-list-section" style="display: none; margin-bottom: 20px; background: #fff; border-radius: 8px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid #eef2f5;">
+          <h4 style="margin: 0 0 10px 0; font-size: 13px; color: #2c3e50; display: flex; justify-content: space-between; align-items: center; font-weight: 700;">
+            <span>📥 담아둔 상품 목록</span>
+            <div style="display: flex; gap: 6px;">
+              <button id="btn-collect-all-cart" style="padding: 4px 10px; font-size: 11px; margin: 0; width: auto; height: auto; border-radius: 4px; line-height: 1.5; font-weight: 500; background-color: #3498db; color: white; border: none; cursor: pointer;">일괄 저장</button>
+              <button id="btn-clear-all-cart" style="padding: 4px 10px; font-size: 11px; margin: 0; width: auto; height: auto; border-radius: 4px; line-height: 1.5; font-weight: 500; background-color: #e74c3c; color: white; border: none; cursor: pointer;">일괄 삭제</button>
+            </div>
+          </h4>
+          <ul id="cart-items-list" style="list-style: none; padding: 0; margin: 0; max-height: 120px; overflow-y: auto; font-size: 11px; color: #555;">
+            <!-- 목록이 동적으로 주입됨 -->
+          </ul>
         </div>
 
         <!-- Stats -->

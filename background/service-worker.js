@@ -363,57 +363,69 @@ async function performScrapingInternal(url, normalizedUrl, collectionType, produ
     let targetTab = null;
     let createdNewTab = false;
 
-    // 1. 탭 열기
-    const result = await openDedicatedScrapeTab(url);
-    targetTab = result.tab;
-    createdNewTab = result.isNew;
+    try {
+        // 1. 탭 열기
+        const result = await openDedicatedScrapeTab(url);
+        targetTab = result.tab;
+        createdNewTab = result.isNew;
 
-    if (!targetTab) {
-        throw new Error('Failed to create or find target tab');
-    }
-
-    // 2. 로딩 대기
-    console.log(`[ServiceWorker] Waiting for tab ${targetTab.id} to load...`);
-    await waitForTabLoad(targetTab.id);
-
-    // 3. 안정화 대기
-    console.log('[ServiceWorker] Page stabilization delay (3000ms)...');
-    await delay(3000);
-
-    // 4. 수집 시작 명령 전송
-    console.log(`[ServiceWorker] Sending EXT_SCRAPE_NOW to tab ${targetTab.id}`);
-    const startResponse = await sendMessageToTabWithRetry(targetTab.id, { action: "EXT_SCRAPE_NOW" });
-
-    // 5. 시작 응답 검증
-    if (!startResponse || startResponse.status !== 'started') {
-        // 레거시 호환 (즉시 데이터가 오는 경우)
-        if (startResponse && (startResponse.name || startResponse.title)) {
-            const finalPayload = await processScrapedData(startResponse, targetTab, collectionType, createdNewTab, productId);
-            return { type: 'SOURCING_COMPLETE', payload: { ...startResponse, logMessage: '[수집완료] (Sync Legacy)' } };
+        if (!targetTab) {
+            throw new Error('Failed to create or find target tab');
         }
-        throw new Error('수집 시작 응답이 올바르지 않습니다.');
-    }
 
-    console.log(`[ServiceWorker] Scrape started on tab ${targetTab.id}. Waiting for async completion...`);
+        // 2. 로딩 대기
+        console.log(`[ServiceWorker] Waiting for tab ${targetTab.id} to load...`);
+        await waitForTabLoad(targetTab.id);
 
-    // 6. 결과 대기 (Promise)
-    const scrapeData = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            if (pendingScrapes.has(targetTab.id)) {
-                pendingScrapes.delete(targetTab.id);
-                reject(new Error('Timeout: 수집 시간이 너무 오래 걸립니다 (300초 초과).'));
+        // 3. 안정화 대기
+        console.log('[ServiceWorker] Page stabilization delay (3000ms)...');
+        await delay(3000);
+
+        // 4. 수집 시작 명령 전송
+        console.log(`[ServiceWorker] Sending EXT_SCRAPE_NOW to tab ${targetTab.id}`);
+        const startResponse = await sendMessageToTabWithRetry(targetTab.id, { action: "EXT_SCRAPE_NOW" });
+
+        // 5. 시작 응답 검증
+        if (!startResponse || startResponse.status !== 'started') {
+            // 레거시 호환 (즉시 데이터가 오는 경우)
+            if (startResponse && (startResponse.name || startResponse.title)) {
+                const finalPayload = await processScrapedData(startResponse, targetTab, collectionType, createdNewTab, productId);
+                return { type: 'SOURCING_COMPLETE', payload: { ...startResponse, logMessage: '[수집완료] (Sync Legacy)' } };
             }
-        }, 300000); // 300초
+            throw new Error('수집 시작 응답이 올바르지 않습니다.');
+        }
 
-        pendingScrapes.set(targetTab.id, { resolve, reject, timer, url });
-    });
+        console.log(`[ServiceWorker] Scrape started on tab ${targetTab.id}. Waiting for async completion...`);
 
-    console.log("[ServiceWorker] Async Scraped Data Received:", scrapeData.name);
+        // 6. 결과 대기 (Promise)
+        const scrapeData = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                if (pendingScrapes.has(targetTab.id)) {
+                    pendingScrapes.delete(targetTab.id);
+                    reject(new Error('Timeout: 수집 시간이 너무 오래 걸립니다 (300초 초과).'));
+                }
+            }, 300000); // 300초
 
-    // 7. 데이터 처리 및 저장
-    const finalPayload = await processScrapedData(scrapeData, targetTab, collectionType, createdNewTab, productId);
+            pendingScrapes.set(targetTab.id, { resolve, reject, timer, url });
+        });
 
-    return { type: 'SOURCING_COMPLETE', payload: finalPayload };
+        console.log("[ServiceWorker] Async Scraped Data Received:", scrapeData.name);
+
+        // 7. 데이터 처리 및 저장
+        const finalPayload = await processScrapedData(scrapeData, targetTab, collectionType, createdNewTab, productId);
+
+        return { type: 'SOURCING_COMPLETE', payload: finalPayload };
+    } catch (error) {
+        // 수집 중 에러가 발생해도, 새로 생성된 탭인 경우 탭을 닫아줍니다.
+        if (createdNewTab && targetTab && targetTab.id) {
+            try {
+                await safeTabOperation(() => chrome.tabs.remove(targetTab.id));
+            } catch (e) {
+                console.error(`[ServiceWorker] 에러 발생 후 탭 닫기 실패:`, e);
+            }
+        }
+        throw error;
+    }
 }
 
 
@@ -903,15 +915,10 @@ async function handleBatchCollect(message, sendResponse) {
 
 
                 if (collectResponse && collectResponse.success) {
-
                     results.success++;
                 } else {
                     throw new Error(collectResponse?.error || '수집 실패');
                 }
-
-                // 다음 탭으로 이동하기 전 대기 (저장 완료 보장)
-
-                await delay(3000);
 
             } catch (error) {
                 console.error(`[ServiceWorker] 탭 "${tab.title}" 수집 실패:`, error);
@@ -920,6 +927,15 @@ async function handleBatchCollect(message, sendResponse) {
                     tab: tab.title || tab.url,
                     error: error.message
                 });
+            } finally {
+                // 성공/실패 여부와 관계없이 수집 시도가 끝난 후에는 탭을 닫아 정리합니다.
+                try {
+                    await safeTabOperation(() => chrome.tabs.remove(tab.id));
+                } catch (e) {
+                    console.error(`[ServiceWorker] 탭 ${tab.id} 닫기 실패:`, e);
+                }
+                // 다음 탭으로 이동하기 전 대기 (저장 완료 보장)
+                await delay(3000);
             }
         }
 
