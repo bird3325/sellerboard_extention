@@ -549,7 +549,7 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
                 
                 if (!isKorean) {
                     const priceText = imgContainer.textContent || a.textContent || '';
-                    const isWon = priceText.includes('₩') || priceText.includes('원') || priceText.toUpperCase().includes('KRW');
+                    const isWon = priceText.includes('₩') || priceText.toUpperCase().includes('KRW') || /\d[\d,\s]*원/.test(priceText);
                     
                     if (isWon) {
                         showErrorModal('통화 설정 변경 안내', '현재 상품 가격이 원화(KRW)로 설정되어 있습니다.<br><br>해외 소싱 상품은 정확한 수집과 이중 환전 수수료 방지를 위해 쇼핑몰 설정에서 <b>통화를 달러(USD)로 변경</b> 후 다시 시도해 주세요.');

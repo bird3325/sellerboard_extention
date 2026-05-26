@@ -947,6 +947,12 @@ async function handleBatchCollect(message, sendResponse) {
             results: results
         }).catch(() => { });
 
+        // 담기 수집에서 실행된 경우 완료 시점에 담아둔 목록 비우기 추가
+        if (message.isCart) {
+            await chrome.storage.local.set({ cart_items: [] });
+            console.log('[ServiceWorker] 일괄 수집 완료로 인해 담기 상품 목록을 비웠습니다.');
+        }
+
         sendResponse({ success: true, results });
 
     } catch (error) {
