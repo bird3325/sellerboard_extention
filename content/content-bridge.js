@@ -136,6 +136,31 @@ window.addEventListener('message', async (event) => {
             }, '*');
         }
     }
+
+    else if (['ANALYZE_PRODUCTS', 'GET_BOOKMARKS', 'TOGGLE_BOOKMARK', 'UPDATE_CANDIDATE_STATUS', 'GET_REVERSE_SEARCH_URL', 'SIMULATE_MARGIN'].includes(type)) {
+        try {
+            console.log(`[SellerBoard Bridge] V2.2 ${type} 요청 수신:`, payload);
+            
+            // Background Action 이름으로 매핑 및 메시지 전송
+            const response = await chrome.runtime.sendMessage({
+                action: type,
+                ...payload
+            });
+            
+            window.postMessage({
+                type: `${type}_COMPLETE`,
+                source: 'SELLERBOARD_EXT',
+                payload: response
+            }, '*');
+        } catch (err) {
+            console.error(`[SellerBoard Bridge] V2.2 ${type} 처리 중 오류:`, err);
+            window.postMessage({
+                type: `${type}_ERROR`,
+                source: 'SELLERBOARD_EXT',
+                error: err?.message || '알 수 없는 오류'
+            }, '*');
+        }
+    }
 });
 
 /**

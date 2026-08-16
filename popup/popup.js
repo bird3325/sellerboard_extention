@@ -46,9 +46,41 @@ function setupEventListeners() {
     // 수집 모드 버튼 이벤트
     document.getElementById('mode-product').addEventListener('click', () => triggerMode('trigger_product', { collection_type: 'single' }));
     document.getElementById('mode-keyword').addEventListener('click', async () => {
-        const keyword = prompt('수집할 키워드를 입력하세요:');
-        if (keyword) {
-            triggerMode('trigger_keyword', { keyword, collection_type: 'keyword' });
+        const result = await showKeywordCriteriaModal();
+        if (result) {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab) return;
+            const platformId = PlatformDetector.detect(tab.url);
+            if (!platformId || platformId === 'generic') {
+                await showConfirmModal('지원 불가', '이 사이트에서는 키워드 수집을 실행할 수 없습니다. 지원되는 쇼핑몰(네이버, 쿠팡, 알리, 타오바오 등)에서 실행해 주세요.', true);
+                return;
+            }
+            
+            showLoading();
+            chrome.runtime.sendMessage({
+                action: 'EXECUTE_SOURCING',
+                data: {
+                    keyword: result.keyword,
+                    platform: platformId,
+                    sourcing_workflows: {
+                        modules: [{
+                            id: "3",
+                            config: {
+                                limit: 50,
+                                criteria: result.criteria
+                            }
+                        }]
+                    }
+                }
+            }, async (response) => {
+                hideLoading();
+                if (response && !response.error) {
+                    await showConfirmModal('수집 완료', `키워드 "${result.keyword}"에 대한 상품 수집 및 자동 분석이 완료되었습니다!\n\n총 ${response.length}개의 상품 중 조건에 맞는 후보군이 선정되었습니다.`, true);
+                    loadStats();
+                } else {
+                    await showConfirmModal('수집 실패', (response && response.error) || '오류가 발생했습니다.', true);
+                }
+            });
         }
     });
 
@@ -467,14 +499,14 @@ async function startBatchCollection() {
         });
 
         if (!response.success) {
-            alert(response.error || '배치 수집 실패');
+            await showConfirmModal('오류', response.error || '배치 수집 실패', true);
             // Close progress window on error
             chrome.windows.remove(progressWindow.id);
         }
 
     } catch (error) {
         console.error('배치 수집 오류:', error);
-        alert('배치 수집 중 오류가 발생했습니다.');
+        await showConfirmModal('오류', '배치 수집 중 오류가 발생했습니다.', true);
     }
 }
 
@@ -513,7 +545,7 @@ function showBatchResult(results) {
 function cancelBatchCollection() {
     // TODO: 실제 취소 로직 구현 (서비스 워커에 취소 메시지 전송)
     document.getElementById('batch-progress-modal').style.display = 'none';
-    alert('배치 수집이 취소되었습니다.');
+    showConfirmModal('알림', '배치 수집이 취소되었습니다.', true);
 }
 
 /**
@@ -835,6 +867,115 @@ function showConfirmModal(title, message, okOnly = false) {
             if (e.target === modalDiv) {
                 modalDiv.remove();
                 resolve(false);
+            }
+        };
+    });
+}
+
+/**
+ * 키워드와 상세 소싱 필터 조건들을 모달창 형태로 한 번에 수집합니다.
+ * @returns {Promise<Object|null>} { keyword, criteria: { minPrice, maxPrice, targetMargin, riskTolerance } } 또는 취소 시 null
+ */
+function showKeywordCriteriaModal() {
+    return new Promise((resolve) => {
+        const existing = document.getElementById('custom-criteria-modal');
+        if (existing) existing.remove();
+
+        const modalDiv = document.createElement('div');
+        modalDiv.id = 'custom-criteria-modal';
+        modalDiv.className = 'batch-modal';
+
+        modalDiv.innerHTML = `
+            <div class="modal-content" style="display: flex; flex-direction: column; gap: 12px; align-items: stretch; width: 330px; text-align: left; background: white; border-radius: var(--radius-lg); padding: 20px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+                <h3 style="margin: 0 0 4px 0; font-size: 15px; color: var(--text-main); font-weight: 700; text-align: center;">🔍 키워드 소싱 설정</h3>
+                
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <label style="font-size: 11px; font-weight: 600; color: var(--text-sub);">수집 키워드 *</label>
+                    <input type="text" id="modal-keyword-input" placeholder="예: 무선 가습기" style="width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; background: var(--bg-body); outline: none;">
+                </div>
+
+                <div style="display: flex; gap: 8px;">
+                    <div style="display: flex; flex-direction: column; gap: 4px; flex: 1;">
+                        <label style="font-size: 11px; font-weight: 600; color: var(--text-sub);">최소 가격 (원)</label>
+                        <input type="number" id="modal-min-price" value="0" style="width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; background: var(--bg-body); outline: none;">
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 4px; flex: 1;">
+                        <label style="font-size: 11px; font-weight: 600; color: var(--text-sub);">최대 가격 (원)</label>
+                        <input type="number" id="modal-max-price" value="100000" style="width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; background: var(--bg-body); outline: none;">
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 8px;">
+                    <div style="display: flex; flex-direction: column; gap: 4px; flex: 1;">
+                        <label style="font-size: 11px; font-weight: 600; color: var(--text-sub);">목표 마진율 (%)</label>
+                        <input type="number" id="modal-target-margin" value="25" style="width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; background: var(--bg-body); outline: none;">
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 4px; flex: 1;">
+                        <label style="font-size: 11px; font-weight: 600; color: var(--text-sub);">리스크 허용도</label>
+                        <select id="modal-risk-tolerance" style="width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; background: var(--bg-body); outline: none; height: 33px;">
+                            <option value="low">낮음 (평점 4.7↑)</option>
+                            <option value="medium" selected>보통 (평점 4.5↑)</option>
+                            <option value="high">높음 (평점 4.0↑)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 8px; margin-top: 10px;">
+                    <button id="criteria-modal-cancel" style="flex: 1; padding: 10px; background-color: #f1f5f9; color: var(--text-sub); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.2s;">취소</button>
+                    <button id="criteria-modal-ok" style="flex: 1; padding: 10px; background-color: var(--primary); color: white; border: none; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.2s;">수집 시작</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modalDiv);
+
+        const okBtn = modalDiv.querySelector('#criteria-modal-ok');
+        const cancelBtn = modalDiv.querySelector('#criteria-modal-cancel');
+        const kwInput = modalDiv.querySelector('#modal-keyword-input');
+        
+        // 자동 포커스
+        setTimeout(() => kwInput.focus(), 50);
+
+        okBtn.onmouseover = () => { okBtn.style.backgroundColor = 'var(--primary-hover)'; };
+        okBtn.onmouseout = () => { okBtn.style.backgroundColor = 'var(--primary)'; };
+        
+        cancelBtn.onmouseover = () => { cancelBtn.style.backgroundColor = '#e2e8f0'; };
+        cancelBtn.onmouseout = () => { cancelBtn.style.backgroundColor = '#f1f5f9'; };
+
+        cancelBtn.onclick = () => {
+            modalDiv.remove();
+            resolve(null);
+        };
+
+        okBtn.onclick = () => {
+            const keyword = kwInput.value.trim();
+            if (!keyword) {
+                showConfirmModal('알림', '키워드를 입력해 주세요.', true);
+                kwInput.focus();
+                return;
+            }
+            
+            const minPrice = parseFloat(modalDiv.querySelector('#modal-min-price').value) || 0;
+            const maxPrice = parseFloat(modalDiv.querySelector('#modal-max-price').value) || 0;
+            const targetMargin = parseFloat(modalDiv.querySelector('#modal-target-margin').value) || 0;
+            const riskTolerance = modalDiv.querySelector('#modal-risk-tolerance').value;
+
+            modalDiv.remove();
+            resolve({
+                keyword,
+                criteria: {
+                    minPrice,
+                    maxPrice,
+                    targetMargin,
+                    riskTolerance
+                }
+            });
+        };
+
+        modalDiv.onclick = (e) => {
+            if (e.target === modalDiv) {
+                modalDiv.remove();
+                resolve(null);
             }
         };
     });

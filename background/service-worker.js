@@ -4,8 +4,9 @@
  */
 
 // Static import (Service Worker는 dynamic import를 지원하지 않음)
-import { SupabaseClient } from '../lib/supabase-client.js';
-import { UrlUtils } from '../lib/url-utils.js';
+import { SupabaseClient } from '/lib/supabase-client.js';
+import { UrlUtils } from '/lib/url-utils.js';
+import { SourcingAnalyzer } from '/lib/sourcing-analyzer.js';
 
 // Supabase 클라이언트 인스턴스
 let supabaseClient = null;
@@ -151,6 +152,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'AUTO_SCRAPE_ERROR':
             handleAutoScrapeError(message, sender, sendResponse);
             return true;
+
+        // [V2.2 SOURCING ANALYSIS HANDLERS]
+        case 'ANALYZE_PRODUCTS':
+            handleAnalyzeProducts(message.items, message.criteria, sendResponse);
+            return true;
+
+        case 'GET_BOOKMARKS':
+            handleGetBookmarks(sendResponse);
+            return true;
+
+        case 'TOGGLE_BOOKMARK':
+            handleToggleBookmark(message.product, sendResponse);
+            return true;
+
+        case 'UPDATE_CANDIDATE_STATUS':
+            handleUpdateCandidateStatus(message.productId, message.statusData, sendResponse);
+            return true;
+
+        case 'GET_REVERSE_SEARCH_URL':
+            sendResponse({
+                url: SourcingAnalyzer.generateReverseSearchUrl(message.imageUrl, message.engine)
+            });
+            break;
+
+        case 'SIMULATE_MARGIN':
+            sendResponse(
+                SourcingAnalyzer.calculateMargin(message.sellingPrice, message.costPrice, message.options)
+            );
+            break;
     }
 });
 
@@ -548,6 +578,7 @@ async function performSourcing({ keyword, platform, sourcing_workflows }) {
         // 1. 설정 추출 (sourcing_workflows에서 id: "3" 모듈 찾기)
         let limit = 50; // 기본값
         let sortType = ''; // 정렬 기준
+        let criteria = {}; // V2.2 분석 기준 조건
 
         if (sourcing_workflows && sourcing_workflows.modules) {
             const module = sourcing_workflows.modules.find(m => m.id === "3");
@@ -557,6 +588,19 @@ async function performSourcing({ keyword, platform, sourcing_workflows }) {
                 if (config.limit) limit = parseInt(config.limit, 10);
                 if (config.sortBy) sortType = config.sortBy;
                 else if (config.sort) sortType = config.sort;
+
+                // V2.2 크라이테리아 파싱
+                if (config.criteria) {
+                    criteria = config.criteria;
+                } else {
+                    criteria = {
+                        minPrice: config.minPrice,
+                        maxPrice: config.maxPrice,
+                        targetMargin: config.targetMargin,
+                        riskTolerance: config.riskTolerance,
+                        category: config.category
+                    };
+                }
 
                 console.log(`[ServiceWorker] 워크플로우 설정 적용: Limit=${limit}, Sort=${sortType}`);
             }
@@ -606,6 +650,18 @@ async function performSourcing({ keyword, platform, sourcing_workflows }) {
         await waitForTabLoad(tabId);
         await delay(2000); // 추가 안정화
 
+        // 리다이렉트 (로그인/보안 문자/차단) 감지 및 예외 처리
+        const loadedTab = await chrome.tabs.get(tabId).catch(() => null);
+        if (loadedTab && loadedTab.url) {
+            const urlLower = loadedTab.url.toLowerCase();
+            if (urlLower.includes('login') || urlLower.includes('signin') || urlLower.includes('auth')) {
+                throw new Error('소싱 사이트의 로그인이 필요합니다. 브라우저에서 먼저 해당 사이트에 로그인한 후 다시 시도해 주세요.');
+            }
+            if (urlLower.includes('captcha') || urlLower.includes('security') || urlLower.includes('blocked') || urlLower.includes('robot') || urlLower.includes('verification')) {
+                throw new Error('보안 문자(CAPTCHA) 인증 또는 봇 방지 감지가 발생했습니다. 브라우저에서 사이트 인증을 완료한 후 다시 시도해 주세요.');
+            }
+        }
+
         // 5. 스크립트 주입 및 데이터 수집 요청
         // limit을 함께 전송하여 파서에서 최적화 할 수 있도록 함 (선택적)
         const response = await sendMessageToTabWithRetry(tabId, {
@@ -630,18 +686,27 @@ async function performSourcing({ keyword, platform, sourcing_workflows }) {
             items = items.slice(0, limit);
         }
 
-        const limitedItems = items.map((item, index) => ({
-            id: item.id || `temp_${Date.now()}_${index}`,
-            name: item.name || 'No Name',
-            price: typeof item.price === 'string' ? parseFloat(item.price.replace(/[^0-9.]/g, '')) : item.price,
-            detailUrl: item.detailUrl || item.url || '',
-            imageUrl: item.imageUrl || '',
-            platform: platform,
-            rating: item.rating || 0,
-            salesVolume: item.salesText || item.salesVolume || '',
-            reviewCount: item.reviewCount || 0,
-            collection_type: 'keyword'
-        }));
+        const limitedItems = items.map((item, index) => {
+            const mappedItem = {
+                id: item.id || `temp_${Date.now()}_${index}`,
+                name: item.name || 'No Name',
+                price: typeof item.price === 'string' ? parseFloat(item.price.replace(/[^0-9.]/g, '')) : item.price,
+                detailUrl: item.detailUrl || item.url || '',
+                imageUrl: item.imageUrl || '',
+                platform: platform,
+                rating: item.rating || 0,
+                salesVolume: item.salesText || item.salesVolume || '',
+                reviewCount: item.reviewCount || 0,
+                collection_type: 'keyword'
+            };
+            
+            // 상품 후보 분석 실행
+            const analysis = SourcingAnalyzer.analyzeItem(mappedItem, criteria);
+            return {
+                ...mappedItem,
+                analysis
+            };
+        });
 
         console.log(`[ServiceWorker] 최종 저장할 아이템 수: ${limitedItems.length}`);
 
@@ -1153,3 +1218,83 @@ async function safeTabOperation(operation, retries = 5, delayMs = 500) {
         }
     }
 }
+
+/**
+ * 후보 상품 분석 핸들러
+ */
+async function handleAnalyzeProducts(items, criteria, sendResponse) {
+    try {
+        const analyzed = SourcingAnalyzer.filterCandidates(items, criteria);
+        sendResponse({ success: true, items: analyzed });
+    } catch (error) {
+        console.error('[ServiceWorker] ANALYZE_PRODUCTS 에러:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+/**
+ * 북마크 목록 조회
+ */
+async function handleGetBookmarks(sendResponse) {
+    try {
+        const result = await chrome.storage.local.get({ bookmarks: [] });
+        sendResponse({ success: true, bookmarks: result.bookmarks });
+    } catch (error) {
+        console.error('[ServiceWorker] GET_BOOKMARKS 에러:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+/**
+ * 북마크 토글 추가/삭제
+ */
+async function handleToggleBookmark(product, sendResponse) {
+    try {
+        const result = await chrome.storage.local.get({ bookmarks: [] });
+        let bookmarks = result.bookmarks;
+        
+        const prodUrl = product.sourcing_url || product.url || product.detailUrl;
+        const existsIndex = bookmarks.findIndex(b => (b.sourcing_url || b.url || b.detailUrl) === prodUrl);
+        
+        let isBookmarked = false;
+        if (existsIndex >= 0) {
+            bookmarks.splice(existsIndex, 1);
+        } else {
+            bookmarks.push({
+                ...product,
+                bookmarkedAt: new Date().toISOString()
+            });
+            isBookmarked = true;
+        }
+        
+        await chrome.storage.local.set({ bookmarks });
+        sendResponse({ success: true, isBookmarked, bookmarks });
+    } catch (error) {
+        console.error('[ServiceWorker] TOGGLE_BOOKMARK 에러:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+/**
+ * 후보 상품 소싱 단계 상태 및 분류/태그 업데이트
+ */
+async function handleUpdateCandidateStatus(productIdOrUrl, statusData, sendResponse) {
+    try {
+        const result = await chrome.storage.local.get({ candidate_metadata: {} });
+        const metadata = result.candidate_metadata;
+        
+        metadata[productIdOrUrl] = {
+            ...(metadata[productIdOrUrl] || {}),
+            status: statusData.status || 'pending',
+            tags: statusData.tags || [],
+            updatedAt: new Date().toISOString()
+        };
+        
+        await chrome.storage.local.set({ candidate_metadata: metadata });
+        sendResponse({ success: true, metadata: metadata[productIdOrUrl] });
+    } catch (error) {
+        console.error('[ServiceWorker] UPDATE_CANDIDATE_STATUS 에러:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
