@@ -628,23 +628,37 @@ if (typeof AliexpressParser === 'undefined') {
                                 // Reduced from 300ms to 200ms
                                 await new Promise(resolve => setTimeout(resolve, 200));
 
-                                // [Performance] Use targeted container for stock text to avoid body.innerText reflow
-                                const infoContainer = document.querySelector('.pdp-info-right') || document.querySelector('[class*="product-info"]') || document.body;
-                                const bodyText = infoContainer.textContent;
+                                // Try to find dedicated stock elements first
+                                const stockEl = document.querySelector('.product-quantity-tip, .quantity-info, [class*="quantity--info"], [class*="quantity--stock"], .quantity-available');
+                                if (stockEl) {
+                                    const stockText = stockEl.textContent;
+                                    const numMatch = stockText.match(/(\d+)/);
+                                    if (numMatch) {
+                                        stock = parseInt(numMatch[1], 10);
+                                    } else if (stockText.toLowerCase().includes('out of stock') || stockText.includes('품절') || stockText.toLowerCase().includes('sold out')) {
+                                        stock = 0;
+                                    }
+                                }
 
-                                let piecesMatch = bodyText.match(/(\d+)\s*pieces?\s*available/i);
-                                if (piecesMatch) {
-                                    stock = parseInt(piecesMatch[1], 10);
-                                } else {
-                                    let leftMatch = bodyText.match(/only\s*(\d+)\s*left/i);
-                                    if (leftMatch) {
-                                        stock = parseInt(leftMatch[1], 10);
+                                if (stock === null) {
+                                    // [Performance] Use targeted container for stock text to avoid body.innerText reflow
+                                    const infoContainer = document.querySelector('.pdp-info-right') || document.querySelector('[class*="product-info"]') || document.body;
+                                    const bodyText = infoContainer.textContent;
+
+                                    let piecesMatch = bodyText.match(/(\d+)\s*pieces?\s*available/i);
+                                    if (piecesMatch) {
+                                        stock = parseInt(piecesMatch[1], 10);
                                     } else {
-                                        let koreanMatch = bodyText.match(/(\d+)\s*개\s*남음/i) || bodyText.match(/재고\s*[:\s]*(\d+)/i);
-                                        if (koreanMatch) {
-                                            stock = parseInt(koreanMatch[1], 10);
-                                        } else if (bodyText.toLowerCase().includes('sold out') || bodyText.includes('품절') || bodyText.toLowerCase().includes('out of stock')) {
-                                            stock = 'out_of_stock';
+                                        let leftMatch = bodyText.match(/only\s*(\d+)\s*left/i);
+                                        if (leftMatch) {
+                                            stock = parseInt(leftMatch[1], 10);
+                                        } else {
+                                            let koreanMatch = bodyText.match(/(\d+)\s*개\s*남음/i) || bodyText.match(/재고\s*[:\s]*(\d+)/i);
+                                            if (koreanMatch) {
+                                                stock = parseInt(koreanMatch[1], 10);
+                                            } else if (bodyText.toLowerCase().includes('sold out') || bodyText.includes('품절') || bodyText.toLowerCase().includes('out of stock')) {
+                                                stock = 'out_of_stock';
+                                            }
                                         }
                                     }
                                 }

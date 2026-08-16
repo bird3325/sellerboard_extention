@@ -1058,10 +1058,15 @@ if (typeof TaobaoParser === 'undefined') {
                                 }
                             }
 
+                            let currentStock = disabled ? 0 : 999;
+                            if (!disabled) {
+                                currentStock = await this.stepExtractStock();
+                            }
+
                             values.push({
                                 value: valName,
                                 price: currentPrice,
-                                stock: disabled ? 0 : 999,
+                                stock: currentStock,
                                 imageUrl: src
                             });
                         }
@@ -1124,10 +1129,15 @@ if (typeof TaobaoParser === 'undefined') {
                             } catch (e) { }
                         }
 
+                        let currentStock = disabled ? 0 : 999;
+                        if (!disabled) {
+                            currentStock = await this.stepExtractStock();
+                        }
+
                         values.push({
                             value: valName,
                             price: currentPrice,
-                            stock: disabled ? 0 : 999,
+                            stock: currentStock,
                             imageUrl: src
                         });
                     }
