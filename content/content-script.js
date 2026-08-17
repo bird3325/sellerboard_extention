@@ -499,6 +499,18 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
     }
 
     function injectCartIcons() {
+        if (!isContextValid()) {
+            if (window.sbCartIconsInterval) {
+                clearInterval(window.sbCartIconsInterval);
+                window.sbCartIconsInterval = null;
+            }
+            if (window.sbCartIconsObserver) {
+                window.sbCartIconsObserver.disconnect();
+                window.sbCartIconsObserver = null;
+            }
+            return;
+        }
+
         const productLinks = document.querySelectorAll('a[href]');
         productLinks.forEach(a => {
             const h = a.href;
@@ -686,9 +698,10 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
             childList: true,
             subtree: true
         });
+        window.sbCartIconsObserver = observer;
 
         // 2. 동적 비동기 로딩(SuperDeals, 무한 스크롤) 백업용 1.5초 주기 폴링
-        setInterval(injectCartIcons, 1500);
+        window.sbCartIconsInterval = setInterval(injectCartIcons, 1500);
     }
 
 }
