@@ -8,10 +8,19 @@
 if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
     window.SellerboardContentScriptInitialized = true;
 
+    function isContextValid() {
+        return typeof chrome !== 'undefined' && chrome.runtime && !!chrome.runtime.id;
+    }
+
     window.addEventListener("message", (event) => {
         // 보안: 신뢰할 수 있는 소스인지 확인 (여기서는 단순히 소스 태그 체크)
         if (event.data?.source === 'SELLERBOARD_WEB' && (event.data?.type === 'SCRAPE_PRODUCT' || event.data?.type === 'SCRAPE_PRODUCT_RELAY')) {
             console.log("[Content] Relaying SCRAPE_PRODUCT to Background:", event.data.payload);
+
+            if (!isContextValid()) {
+                console.warn("[Content] Extension context invalidated. Relaying aborted.");
+                return;
+            }
 
             // Background로 전달 (내부 메시징이므로 externally_connectable 불필요)
             // 기존 컨벤션(action)과 새 컨벤션(type) 모두 호환되도록 전송
@@ -21,14 +30,18 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
                 payload.collection_type = 'work';
             }
 
-            chrome.runtime.sendMessage({
-                action: 'SCRAPE_PRODUCT',
-                type: 'SCRAPE_PRODUCT',
-                payload: payload
-            }, (response) => {
-                console.log("[Content] Background Response:", response);
-                // 필요시 웹 페이지로 다시 응답을 돌려줄 수 있음
-            });
+            try {
+                chrome.runtime.sendMessage({
+                    action: 'SCRAPE_PRODUCT',
+                    type: 'SCRAPE_PRODUCT',
+                    payload: payload
+                }, (response) => {
+                    console.log("[Content] Background Response:", response);
+                    // 필요시 웹 페이지로 다시 응답을 돌려줄 수 있음
+                });
+            } catch (e) {
+                console.error("[Content] sendMessage failed:", e);
+            }
         }
     });
 
@@ -119,28 +132,34 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
                             // [SKIPPED] 수집 제외 처리
                             if (data.skipped) {
                                 console.log('[Content] 상품 수집이 제외되었습니다:', data.reason);
-                                chrome.runtime.sendMessage({
-                                    action: 'AUTO_SCRAPE_DONE',
-                                    data: data
-                                });
+                                if (isContextValid()) {
+                                    chrome.runtime.sendMessage({
+                                        action: 'AUTO_SCRAPE_DONE',
+                                        data: data
+                                    });
+                                }
                                 return;
                             }
 
                             console.log("[Content] Verified Description Length:", data.description ? data.description.length : 0);
 
                             // [ASYNC COMPLETION] 수집 완료 메시지 전송
-                            chrome.runtime.sendMessage({
-                                action: 'AUTO_SCRAPE_DONE',
-                                data: data
-                            });
+                            if (isContextValid()) {
+                                chrome.runtime.sendMessage({
+                                    action: 'AUTO_SCRAPE_DONE',
+                                    data: data
+                                });
+                            }
                         } catch (e) {
 
                             console.error("Auto Scrape Error:", e);
                             // [ASYNC ERROR] 에러 메시지 전송
-                            chrome.runtime.sendMessage({
-                                action: 'AUTO_SCRAPE_ERROR',
-                                error: e.message
-                            });
+                            if (isContextValid()) {
+                                chrome.runtime.sendMessage({
+                                    action: 'AUTO_SCRAPE_ERROR',
+                                    error: e.message
+                                });
+                            }
                         }
                     })();
                     return true; // Keep channel open (optional due to immediate response, but good for safety)
@@ -235,14 +254,28 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
                     return;
                 }
 
+                if (!isContextValid()) {
+                    showErrorModal('수집 오류', '확장 프로그램 컨텍스트가 만료되었습니다. 페이지를 새로고침 해주세요.');
+                    sendResponse({ success: false, error: 'Context invalidated' });
+                    return;
+                }
+
                 // Service Worker로 데이터 전송하여 저장
-                const saveResponse = await chrome.runtime.sendMessage({
-                    action: 'saveProduct',
-                    data: {
-                        ...productData,
-                        collection_type: collectionType
-                    }
-                });
+                let saveResponse;
+                try {
+                    saveResponse = await chrome.runtime.sendMessage({
+                        action: 'saveProduct',
+                        data: {
+                            ...productData,
+                            collection_type: collectionType
+                        }
+                    });
+                } catch (sendErr) {
+                    console.error('sendMessage failed:', sendErr);
+                    showErrorModal('수집 실패', '백그라운드 통신 오류');
+                    sendResponse({ success: false, error: sendErr.message });
+                    return;
+                }
 
                 if (saveResponse && saveResponse.success) {
                     sendResponse({ success: true, message: '상품이 성공적으로 저장되었습니다.' });
@@ -411,6 +444,7 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
     async function checkAndInitCartIcons() {
         const platform = PlatformDetector.detect();
         if (!platform || platform === 'generic') return;
+        if (!isContextValid()) return;
 
         try {
             chrome.runtime.sendMessage({
@@ -506,6 +540,7 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
             // 담기 버튼 생성
             const btn = document.createElement('button');
             btn.className = 'sb-cart-btn';
+            if (!isContextValid()) return;
             const logoUrl = chrome.runtime.getURL('assets/icons/icon48.png');
             btn.innerHTML = `<img src="${logoUrl}" style="width: 24px; height: 24px; display: block; pointer-events: none;">`;
             btn.title = '담기 수집 목록에 추가';
@@ -528,15 +563,19 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
             });
 
             // 이미 담겨 있는 URL인지 체크하여 초기 상태 적용
-            chrome.storage.local.get({ cart_items: [] }, (result) => {
-                const isContained = result.cart_items.some(item => 
-                    (typeof item === 'object' && item !== null) ? item.url === h : item === h
-                );
-                if (isContained) {
-                    btn.classList.add('sb-contained');
-                    btn.title = '이미 담겼습니다';
-                }
-            });
+            try {
+                chrome.storage.local.get({ cart_items: [] }, (result) => {
+                    const isContained = result.cart_items.some(item => 
+                        (typeof item === 'object' && item !== null) ? item.url === h : item === h
+                    );
+                    if (isContained) {
+                        btn.classList.add('sb-contained');
+                        btn.title = '이미 담겼습니다';
+                    }
+                });
+            } catch (storageErr) {
+                console.warn('storage get failed:', storageErr);
+            }
 
             // 클릭 이벤트
             btn.onclick = async (e) => {
@@ -557,7 +596,15 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
                     }
                 }
 
-                const result = await chrome.storage.local.get({ cart_items: [] });
+                if (!isContextValid()) return;
+
+                let result;
+                try {
+                    result = await chrome.storage.local.get({ cart_items: [] });
+                } catch (storageErr) {
+                    console.error('storage get failed:', storageErr);
+                    return;
+                }
                 const cartItems = result.cart_items;
                 const isContained = cartItems.some(item => 
                     (typeof item === 'object' && item !== null) ? item.url === h : item === h
@@ -569,7 +616,11 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
                         const itemUrl = (typeof item === 'object' && item !== null) ? item.url : item;
                         return itemUrl !== h;
                     });
-                    await chrome.storage.local.set({ cart_items: newCartItems });
+                    try {
+                        await chrome.storage.local.set({ cart_items: newCartItems });
+                    } catch (storageErr) {
+                        console.error('storage set failed:', storageErr);
+                    }
                     btn.classList.remove('sb-contained');
                     btn.title = '담기 수집 목록에 추가';
                     showToast('담기 해제되었습니다.');
@@ -577,7 +628,11 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
                     // 추가
                     const imgSrc = img ? (img.src || img.dataset.src || '') : '';
                     cartItems.push({ url: h, imageUrl: imgSrc });
-                    await chrome.storage.local.set({ cart_items: cartItems });
+                    try {
+                        await chrome.storage.local.set({ cart_items: cartItems });
+                    } catch (storageErr) {
+                        console.error('storage set failed:', storageErr);
+                    }
                     btn.classList.add('sb-contained');
                     btn.title = '이미 담겼습니다';
                     showToast('담기 수집 목록에 추가되었습니다.');

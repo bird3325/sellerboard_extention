@@ -242,6 +242,9 @@ if (typeof AliexpressParser === 'undefined') {
                         // Skip very small icons
                         if (w > 0 && w < 50) return false;
                         if (h > 0 && h < 50) return false;
+                        
+                        if (this.isPlayElement(img)) return false;
+                        
                         return true;
                     });
 
@@ -972,12 +975,14 @@ if (typeof AliexpressParser === 'undefined') {
                     const imgs = descEl.querySelectorAll('img');
                     imgs.forEach(img => {
                         const src = img.src || img.dataset.src;
-                        if (src && !src.includes('data:image')) {
+                        if (src && !src.includes('data:image') && !this.isPlayElement(img)) {
                             let finalSrc = src;
                             if (src.includes('alicdn.com')) {
                                 finalSrc = src.replace(/(_\d+x\d+)\.(jpg|png|webp).*/i, '').replace(/\.(jpg|png|webp)_.*/i, '.$1');
                             }
-                            d.images.push(finalSrc);
+                            if (!this.isPlayIcon(finalSrc)) {
+                                d.images.push(finalSrc);
+                            }
                         }
                     });
                     d.images = [...new Set(d.images)].slice(0, 20);
@@ -1219,8 +1224,10 @@ if (typeof AliexpressParser === 'undefined') {
             const images = [];
             const seen = new Set();
 
-            const addImg = (src) => {
+            const addImg = (src, el) => {
                 if (!src || src.includes('data:image')) return;
+                if (el && this.isPlayElement(el)) return;
+                if (this.isPlayIcon(src)) return;
 
                 // AliExpress 이미지 고해상도 변환
                 let finalSrc = src;
@@ -1230,7 +1237,7 @@ if (typeof AliexpressParser === 'undefined') {
                         .replace(/\.(jpg|png|webp)_.*/i, '.$1');       // .jpg_... 제거
                 }
 
-                if (!seen.has(finalSrc)) {
+                if (!this.isPlayIcon(finalSrc) && !seen.has(finalSrc)) {
                     seen.add(finalSrc);
                     images.push(finalSrc);
                 }
@@ -1274,7 +1281,7 @@ if (typeof AliexpressParser === 'undefined') {
                     if (!img.closest('[class*="related"]') &&
                         !img.closest('[class*="recommend"]') &&
                         !img.closest('[class*="suggestion"]')) {
-                        addImg(img.src || img.dataset.src || img.getAttribute('data-original'));
+                        addImg(img.src || img.dataset.src || img.getAttribute('data-original'), img);
                     }
                 });
             });
@@ -1291,7 +1298,7 @@ if (typeof AliexpressParser === 'undefined') {
                     if (img.width > 200 && img.height > 200) {
                         if (!img.closest('[class*="related"]') &&
                             !img.closest('[class*="recommend"]')) {
-                            addImg(img.src);
+                            addImg(img.src, img);
                         }
                     }
                 });

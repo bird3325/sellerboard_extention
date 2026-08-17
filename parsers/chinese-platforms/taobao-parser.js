@@ -94,8 +94,11 @@ if (typeof TaobaoParser === 'undefined') {
                     const imgEl = card.querySelector('.pic img, .J_ItemPic, [class*="MainPic--mainPic"]');
                     let imageUrl = '';
                     if (imgEl) {
-                        imageUrl = imgEl.src || imgEl.dataset.src || '';
-                        if (imageUrl.startsWith('//')) imageUrl = 'https:' + imageUrl;
+                        const tempUrl = imgEl.src || imgEl.dataset.src || '';
+                        if (tempUrl && !this.isPlayElement(imgEl)) {
+                            imageUrl = tempUrl;
+                            if (imageUrl.startsWith('//')) imageUrl = 'https:' + imageUrl;
+                        }
                     }
 
                     // Sales/Location (for sorting verification)
@@ -565,10 +568,12 @@ if (typeof TaobaoParser === 'undefined') {
                 }
 
                 if (candidateImages.length > 0) {
-                    images = candidateImages.map(url => {
+                    candidateImages.forEach(url => {
                         let u = url;
                         if (u.startsWith('//')) u = 'https:' + u;
-                        return u;
+                        if (!this.isPlayIcon(u)) {
+                            images.push(u);
+                        }
                     });
                 }
             }
@@ -587,11 +592,9 @@ if (typeof TaobaoParser === 'undefined') {
                     const thumbs = document.querySelectorAll(sel);
                     if (thumbs.length > 0) {
                         thumbs.forEach(img => {
-                            let src = img.src || img.getAttribute('data-src') || img.getAttribute('placeholder'); // Sometimes placeholder has real one? No, usually src.
-                            // User html shows src has the image (maybe tiny), but we want to clean it.
-                            // If src starts with //img.alicdn... ensure we take that.
+                            let src = img.src || img.getAttribute('data-src') || img.getAttribute('placeholder'); 
 
-                            if (src) {
+                            if (src && !this.isPlayElement(img)) {
                                 // Cleanup logic
                                 // format: url.jpg_q50.jpg_.webp -> url.jpg
                                 // format: url.jpg_400x400.jpg -> url.jpg
@@ -602,7 +605,7 @@ if (typeof TaobaoParser === 'undefined') {
                                     .replace(/_sum\.jpg$/, '');
 
                                 if (src.startsWith('//')) src = 'https:' + src;
-                                if (!images.includes(src)) images.push(src);
+                                if (!this.isPlayIcon(src) && !images.includes(src)) images.push(src);
                             }
                         });
                     }
@@ -614,13 +617,15 @@ if (typeof TaobaoParser === 'undefined') {
                 const main = document.querySelector('[class*="Image--mainImage"] img, #J_ImgBooth, .MainPic img');
                 if (main) {
                     let src = main.src;
-                    src = src.split('_.webp')[0]
-                        .replace(/_q\d+\.jpg$/, '')
-                        .replace(/_\d+x\d+.*$/, '')
-                        .replace(/\.jpg_.+$/, '.jpg')
-                        .replace(/_sum\.jpg$/, '');
-                    if (src.startsWith('//')) src = 'https:' + src;
-                    images.push(src);
+                    if (src && !this.isPlayElement(main)) {
+                        src = src.split('_.webp')[0]
+                            .replace(/_q\d+\.jpg$/, '')
+                            .replace(/_\d+x\d+.*$/, '')
+                            .replace(/\.jpg_.+$/, '.jpg')
+                            .replace(/_sum\.jpg$/, '');
+                        if (src.startsWith('//')) src = 'https:' + src;
+                        if (!this.isPlayIcon(src)) images.push(src);
+                    }
                 }
             }
 

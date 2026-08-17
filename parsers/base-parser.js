@@ -277,6 +277,64 @@ if (typeof BaseParser === 'undefined') {
         }
 
         /**
+         * 이미지 URL이 동영상 재생(play) 아이콘/버튼인지 확인
+         * @param {string} url 
+         * @returns {boolean}
+         */
+        isPlayIcon(url) {
+            if (!url) return false;
+            const urlLower = url.toLowerCase();
+            return urlLower.includes('play_button') || 
+                   urlLower.includes('play-button') || 
+                   urlLower.includes('play-icon') || 
+                   urlLower.includes('play_icon') || 
+                   urlLower.includes('video-play') || 
+                   urlLower.includes('video_play') ||
+                   /\bplay\.(?:png|jpg|gif|svg|webp)/i.test(urlLower) ||
+                   /\bvideo\.(?:png|jpg|gif|svg|webp)/i.test(urlLower);
+        }
+
+        /**
+         * 이미지 요소가 동영상 재생(play) 관련 아이콘이나 비디오 컨트롤 내부에 있는지 확인
+         * @param {Element} imgElement 
+         * @returns {boolean}
+         */
+        isPlayElement(imgElement) {
+            if (!imgElement) return false;
+            
+            // 1. 이미지 자체의 클래스나 alt 속성 검사
+            const className = (imgElement.className || '').toLowerCase();
+            const altText = (imgElement.alt || '').toLowerCase();
+            const src = (imgElement.src || imgElement.dataset.src || imgElement.getAttribute('data-original') || '').toLowerCase();
+            
+            if (className.includes('play') || className.includes('video') || className.includes('player')) {
+                return true;
+            }
+            if (altText.includes('play') || altText.includes('video')) {
+                return true;
+            }
+            
+            // 2. URL 경로 검사
+            if (this.isPlayIcon(src)) {
+                return true;
+            }
+
+            // 3. 비디오/플레이어 관련 부모 요소 내부에 있는지 검사
+            try {
+                if (imgElement.closest('[class*="video"]') || 
+                    imgElement.closest('[class*="player"]') || 
+                    imgElement.closest('[class*="play"]') ||
+                    imgElement.closest('[id*="video"]') || 
+                    imgElement.closest('[id*="player"]') || 
+                    imgElement.closest('[id*="play"]')) {
+                    return true;
+                }
+            } catch (e) {}
+
+            return false;
+        }
+
+        /**
          * 이미지 URL 추출
          * @returns {Promise<string[]>}
          */
@@ -289,7 +347,7 @@ if (typeof BaseParser === 'undefined') {
 
             elements.forEach(el => {
                 const src = el.src || el.dataset.src || el.getAttribute('data-original');
-                if (src && !images.includes(src)) {
+                if (src && !this.isPlayElement(el) && !images.includes(src)) {
                     images.push(src);
                 }
             });
