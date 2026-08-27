@@ -51,6 +51,41 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
         initContentScript();
     }
 
+    function syncAllCartButtonsUI(cartItems = []) {
+        const containedUrls = new Set(cartItems.map(item => 
+            (typeof item === 'object' && item !== null) ? item.url : item
+        ));
+
+        // 1. 리스트 상품 카드의 담기 아이콘들 전수 동기화
+        document.querySelectorAll('.sb-cart-btn').forEach(btn => {
+            const itemUrl = btn.dataset.url;
+            if (itemUrl) {
+                if (containedUrls.has(itemUrl)) {
+                    btn.classList.add('sb-contained');
+                    btn.title = '이미 담겼습니다';
+                } else {
+                    btn.classList.remove('sb-contained');
+                    btn.title = '담기 수집 목록에 추가';
+                }
+            }
+        });
+
+        // 2. 활성화된 플로팅 분석 정보창 내 담기 버튼 동기화
+        if (activeTooltip) {
+            const tooltipCartBtn = activeTooltip.querySelector('.sb-tooltip-cart-btn');
+            const tooltipItemUrl = activeTooltip.dataset.url;
+            if (tooltipCartBtn && tooltipItemUrl) {
+                if (containedUrls.has(tooltipItemUrl)) {
+                    tooltipCartBtn.classList.add('sb-contained');
+                    tooltipCartBtn.innerHTML = `<span>✓</span> <span>담김</span>`;
+                } else {
+                    tooltipCartBtn.classList.remove('sb-contained');
+                    tooltipCartBtn.innerHTML = `<span>🛒</span> <span>담기</span>`;
+                }
+            }
+        }
+    }
+
     function initContentScript() {
         if (isContextValid() && chrome.storage && chrome.storage.local) {
             chrome.storage.local.get({ userMultiplier: 2.5 }, (res) => {
@@ -58,6 +93,15 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
                     userMultiplier = parseFloat(res.userMultiplier) || 2.5;
                 }
             });
+
+            if (chrome.storage.onChanged) {
+                chrome.storage.onChanged.addListener((changes, areaName) => {
+                    if (areaName === 'local' && changes.cart_items) {
+                        const newCartItems = changes.cart_items.newValue || [];
+                        syncAllCartButtonsUI(newCartItems);
+                    }
+                });
+            }
         }
 
         // ParserManager는 manifest.json에서 먼저 로드되므로 global로 접근 가능
@@ -591,6 +635,7 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
             // 담기 버튼 생성
             const btn = document.createElement('button');
             btn.className = 'sb-cart-btn';
+            btn.dataset.url = h;
             if (!isContextValid()) return;
             const logoUrl = chrome.runtime.getURL('assets/icons/icon48.png');
             btn.innerHTML = `<img src="${logoUrl}" style="width: 24px; height: 24px; display: block; pointer-events: none;">`;
@@ -1049,6 +1094,8 @@ if (typeof window.SellerboardContentScriptInitialized === 'undefined') {
 
     function renderAnalysisInTooltip(tooltip, cardData, analyzedItem, currentMult) {
         if (!tooltip || !tooltip.parentNode) return;
+
+        tooltip.dataset.url = cardData.detailUrl || cardData.id || '';
 
         const mult = currentMult || userMultiplier || 2.5;
         const analysis = (typeof SourcingAnalyzer !== 'undefined') ? SourcingAnalyzer.analyzeItem(cardData, { multiplier: mult }) : (analyzedItem.analysis || {});
