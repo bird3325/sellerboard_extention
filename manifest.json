@@ -32,6 +32,7 @@
       ],
       "js": [
         "lib/platform-detector.js",
+        "lib/sourcing-analyzer.js",
         "parsers/base-parser.js",
         "parsers/chinese-platforms/aliexpress-parser.js",
         "parsers/chinese-platforms/1688-parser.js",

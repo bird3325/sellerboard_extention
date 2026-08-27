@@ -6,7 +6,7 @@
 // Static import (Service Worker는 dynamic import를 지원하지 않음)
 import { SupabaseClient } from '/lib/supabase-client.js';
 import { UrlUtils } from '/lib/url-utils.js';
-import { SourcingAnalyzer } from '/lib/sourcing-analyzer.js';
+import '/lib/sourcing-analyzer.js';
 
 // Supabase 클라이언트 인스턴스
 let supabaseClient = null;
@@ -1224,7 +1224,15 @@ async function safeTabOperation(operation, retries = 5, delayMs = 500) {
  */
 async function handleAnalyzeProducts(items, criteria, sendResponse) {
     try {
-        const analyzed = SourcingAnalyzer.filterCandidates(items, criteria);
+        let analyzed;
+        if (criteria && criteria.filterCandidates) {
+            analyzed = SourcingAnalyzer.filterCandidates(items, criteria);
+        } else {
+            analyzed = (items || []).map(item => {
+                const analysis = SourcingAnalyzer.analyzeItem(item, criteria);
+                return { ...item, analysis };
+            });
+        }
         sendResponse({ success: true, items: analyzed });
     } catch (error) {
         console.error('[ServiceWorker] ANALYZE_PRODUCTS 에러:', error);
